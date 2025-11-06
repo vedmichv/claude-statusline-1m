@@ -39,21 +39,23 @@ The script detects your model's context window from the model ID:
 ## Supported Models
 
 - ✅ Claude Sonnet 4.5 with 1M context (`[1m]`)
-- ✅ Claude Sonnet 3.5 with 200K context (default)
+- ✅ Claude Sonnet 4 with 1M context (`[1m]`)
 - ✅ Any future models with `[XM]` or `[Xk]` suffixes
 
 ## Pricing Information
 
-Claude Sonnet 4.5 with 1M context has tiered pricing:
+### Both Anthropic API & AWS Bedrock
 
-| Token Range | Input | Output |
-|-------------|-------|--------|
-| ≤ 200K tokens | $3/M | $15/M |
-| > 200K tokens | $6/M | $22.50/M |
+Claude Sonnet 4/4.5 with 1M context has **tiered pricing**:
 
-⚠️ **Important**: When you exceed 200K tokens, **ALL tokens** in that request are charged at the premium rate, not just the excess.
+| Token Range | Input | Output | Notes |
+|-------------|-------|--------|-------|
+| ≤ 200K tokens | $3/M | $15/M | Standard rate |
+| > 200K tokens | $6/M | $22.50/M | Premium rate (2x input, 1.5x output) |
 
-The statusline will display a **💸2x** indicator when you cross into premium pricing territory.
+⚠️ **Critical**: When you exceed 200K tokens, **ALL tokens** in that request are charged at the premium rate, not just the excess.
+
+The statusline displays a **💸2x** indicator when you cross into premium pricing territory (>200K tokens).
 
 ## Requirements
 
