@@ -3,13 +3,17 @@
   "version": "1.2.0",
   "description": "Claude Code statusline with dynamic 1M context support and premium pricing alerts",
   "bin": {
-    "claude-statusline-1m": "./install.js"
+    "claude-statusline-1m": "install.js"
   },
   "files": [
     "install.js",
     "scripts/"
   ],
-  "keywords": ["claude-code", "statusline", "cli"],
+  "keywords": [
+    "claude-code",
+    "statusline",
+    "cli"
+  ],
   "author": "viktor",
   "license": "MIT"
 }
