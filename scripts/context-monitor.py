@@ -108,10 +108,12 @@ def get_context_display(context_info):
     """Generate context display with visual indicators."""
     if not context_info:
         return "🔵 ???"
-    
+
     percent = context_info.get('percent', 0)
+    tokens = context_info.get('tokens', 0)
+    context_window = context_info.get('context_window', 200000)
     warning = context_info.get('warning')
-    
+
     # Color and icon based on usage level
     if percent >= 95:
         icon, color = "🚨", "\033[31;1m"  # Blinking red
@@ -128,22 +130,27 @@ def get_context_display(context_info):
     else:
         icon, color = "🟢", "\033[32m"   # Green
         alert = ""
-    
+
     # Create progress bar
     segments = 8
     filled = int((percent / 100) * segments)
     bar = "█" * filled + "▁" * (segments - filled)
-    
+
     # Special warnings
     if warning == 'auto-compact':
         alert = "AUTO-COMPACT!"
     elif warning == 'low':
         alert = "LOW!"
-    
+
+    # Premium pricing warning (>200K tokens = 2x cost)
+    premium_pricing = ""
+    if context_window >= 1000000 and tokens > 200000:
+        premium_pricing = " \033[33m💸2x\033[0m"  # Indicator for premium pricing
+
     reset = "\033[0m"
     alert_str = f" {alert}" if alert else ""
-    
-    return f"{icon}{color}{bar}{reset} {percent:.0f}%{alert_str}"
+
+    return f"{icon}{color}{bar}{reset} {percent:.0f}%{alert_str}{premium_pricing}"
 
 def get_directory_display(workspace_data):
     """Get directory display name."""

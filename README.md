@@ -7,6 +7,7 @@ Dynamic context window detection for Claude Code statusline that automatically a
 - 🎯 **Dynamic Context Detection**: Automatically detects `[1m]`, `[200k]`, etc. suffixes
 - 📊 **Accurate Percentages**: Shows correct context usage for 1M and 200K models
 - 💰 **Session Metrics**: Cost tracking and duration monitoring
+- 💸 **Premium Pricing Alert**: Shows "💸2x" indicator when exceeding 200K tokens (2x pricing tier)
 - 🎨 **Color-coded Alerts**: Visual warnings at 50%, 75%, 90%, 95% usage
 
 ## Installation
@@ -18,7 +19,7 @@ npx claude-statusline-1m
 
 ### Via GitHub
 ```bash
-npx github:YOUR_USERNAME/claude-statusline-1m
+npx github:vedmichv/claude-statusline-1m
 ```
 
 ### Local Testing
@@ -40,6 +41,19 @@ The script detects your model's context window from the model ID:
 - ✅ Claude Sonnet 4.5 with 1M context (`[1m]`)
 - ✅ Claude Sonnet 3.5 with 200K context (default)
 - ✅ Any future models with `[XM]` or `[Xk]` suffixes
+
+## Pricing Information
+
+Claude Sonnet 4.5 with 1M context has tiered pricing:
+
+| Token Range | Input | Output |
+|-------------|-------|--------|
+| ≤ 200K tokens | $3/M | $15/M |
+| > 200K tokens | $6/M | $22.50/M |
+
+⚠️ **Important**: When you exceed 200K tokens, **ALL tokens** in that request are charged at the premium rate, not just the excess.
+
+The statusline will display a **💸2x** indicator when you cross into premium pricing territory.
 
 ## Requirements
 
