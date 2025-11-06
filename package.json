@@ -1,0 +1,15 @@
+{
+  "name": "claude-statusline-1m",
+  "version": "1.0.0",
+  "description": "Claude Code statusline with dynamic 1M context support",
+  "bin": {
+    "claude-statusline-1m": "./install.js"
+  },
+  "files": [
+    "install.js",
+    "scripts/"
+  ],
+  "keywords": ["claude-code", "statusline", "cli"],
+  "author": "viktor",
+  "license": "MIT"
+}
