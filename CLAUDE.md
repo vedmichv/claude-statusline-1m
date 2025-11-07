@@ -78,8 +78,10 @@ echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_d
 - The `bin` field in package.json points to `statusline.js`
 - Script must be executable: `chmod +x statusline.js`
 - Always use `path.join()` for cross-platform path handling
-- Must properly pipe stdin to Python subprocess (Claude Code sends JSON via stdin)
+- Must collect all stdin data before passing to Python (piping directly doesn't work reliably)
+- Uses event-driven stdin collection: `process.stdin.on('data')` and `process.stdin.on('end')`
 - Must properly pipe stdout from Python back to Claude Code
+- Includes signal handlers (SIGTERM, SIGINT) for clean termination
 
 ### When Modifying context-monitor.py
 - Script receives JSON via stdin from Claude Code
