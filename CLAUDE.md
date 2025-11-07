@@ -16,19 +16,34 @@ The tool automatically detects the model's context window size from suffixes lik
 
 ## Architecture
 
-### Self-Contained NPX Approach
+### Tri-Part System
 
-1. **statusline.js** (Node.js wrapper)
-   - Entry point executed via `npx -y github:vedmichv/claude-statusline-1m`
+1. **cli.js** (Smart Entry Point)
+   - Main bin entry executed via `npx claude-statusline-1m`
+   - Detects execution mode based on context:
+     - If stdin has JSON data (piped from Claude Code) → runs as statusline
+     - If `--install` flag present → runs as installer
+     - Otherwise → shows help/usage information
+   - Routes to appropriate module (statusline.js or install-cli.js)
+
+2. **statusline.js** (Statusline Display)
    - Spawns Python subprocess to run `context-monitor.py`
-   - Pipes stdin from Claude Code to Python script
-   - Pipes stdout from Python script back to Claude Code
-   - No installation or file copying needed - runs directly from NPX cache
+   - Collects all stdin data from Claude Code using event listeners
+   - Passes complete JSON to Python script
+   - Pipes stdout from Python back to Claude Code
+   - Handles signal termination (SIGTERM, SIGINT)
 
-2. **context-monitor.py** (Python statusline script)
-   - Reads JSON input from stdin (provided by Claude Code via statusline.js)
-   - Parses transcript file to extract context usage from recent messages
-   - Extracts context window size from model ID using regex (e.g., `[1m]` → 1,000,000)
+3. **install-cli.js** (Automatic Installer)
+   - Interactive installation wizard
+   - Asks user where to install (global, project, or local)
+   - Copies Python script to appropriate .claude/scripts/ directory
+   - Automatically updates settings.json or settings.local.json
+   - Shows installation summary and next steps
+
+4. **context-monitor.py** (Python Statusline Script)
+   - Reads JSON input from stdin
+   - Parses transcript file to extract context usage
+   - Extracts context window size from model ID regex (e.g., `[1m]` → 1,000,000)
    - Generates colored, formatted statusline output to stdout
 
 ### Key Technical Details
@@ -49,39 +64,65 @@ The tool automatically detects the model's context window size from suffixes lik
 
 ## Development Commands
 
-### Configuration
+### Installation (Automatic)
+```bash
+# Install with interactive prompts
+npx claude-statusline-1m --install
+
+# Install with defaults (local settings)
+npx claude-statusline-1m --install --yes
+```
+
+### Manual Configuration
 Add to `.claude/settings.local.json` (project) or `~/.claude/settings.local.json` (global):
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "npx -y github:vedmichv/claude-statusline-1m"
+    "command": "npx -y claude-statusline-1m"
   }
 }
 ```
 
 ### Testing
 ```bash
-# Test the complete statusline (Node.js wrapper + Python script)
-echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_dir":"/tmp"},"transcript_path":""}' | npx -y github:vedmichv/claude-statusline-1m
+# Test the CLI (shows help)
+node cli.js --help
 
-# Test just the Python script directly
+# Test statusline mode (stdin piping)
+echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_dir":"/tmp"},"transcript_path":""}' | node cli.js
+
+# Test installer
+node cli.js --install --yes
+
+# Test Python script directly
 echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_dir":"/tmp"},"transcript_path":""}' | python3 scripts/context-monitor.py
-
-# Local testing during development
-echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_dir":"/tmp"},"transcript_path":""}' | node statusline.js
 ```
 
 ## Important Implementation Notes
 
+### When Modifying cli.js
+- The `bin` field in package.json points to `cli.js` (main entry point)
+- Script must be executable: `chmod +x cli.js`
+- Uses `process.stdin.isTTY` to detect if being piped data from Claude Code
+- Routes to statusline.js for statusline mode, install-cli.js for installation
+
 ### When Modifying statusline.js
-- The `bin` field in package.json points to `statusline.js`
 - Script must be executable: `chmod +x statusline.js`
 - Always use `path.join()` for cross-platform path handling
 - Must collect all stdin data before passing to Python (piping directly doesn't work reliably)
 - Uses event-driven stdin collection: `process.stdin.on('data')` and `process.stdin.on('end')`
 - Must properly pipe stdout from Python back to Claude Code
 - Includes signal handlers (SIGTERM, SIGINT) for clean termination
+
+### When Modifying install-cli.js
+- Script must be executable: `chmod +x install-cli.js`
+- Uses readline for interactive prompts
+- Supports `--yes` flag to skip prompts
+- Must handle three installation locations: global (~/.claude), project (.claude), local (.claude/settings.local.json)
+- Creates directories as needed with `fs.mkdirSync({ recursive: true })`
+- Merges with existing settings.json if present
+- Always outputs absolute paths in settings for reliability
 
 ### When Modifying context-monitor.py
 - Script receives JSON via stdin from Claude Code

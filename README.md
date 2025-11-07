@@ -12,21 +12,32 @@ Dynamic context window detection for Claude Code statusline that automatically a
 
 ## Installation
 
-### Step 1: Add Configuration
+### 🚀 Automatic Installation (Recommended)
 
-Add this to your `.claude/settings.local.json`:
+Run the installer - it will set everything up for you:
 
-**Project-level** (recommended - only for current project):
 ```bash
-# Create/edit .claude/settings.local.json in your project directory
+npx claude-statusline-1m --install
 ```
 
-**Global** (all projects):
+The installer will:
+1. Ask where you want to install (global, project, or local)
+2. Copy the Python script to the right location
+3. Update your settings.json automatically
+4. Show you what was installed
+
+**Quick install with defaults** (installs locally without prompts):
 ```bash
-# Create/edit ~/.claude/settings.local.json
+npx claude-statusline-1m --install --yes
 ```
 
-**Configuration:**
+Then **restart Claude Code** and you're done! 🎉
+
+### 🛠️ Manual Installation (Advanced)
+
+If you prefer to configure manually, add this to your `.claude/settings.json` or `.claude/settings.local.json`:
+
+**For npm version:**
 ```json
 {
   "statusLine": {
@@ -36,7 +47,7 @@ Add this to your `.claude/settings.local.json`:
 }
 ```
 
-Or use the GitHub version directly:
+**For GitHub version:**
 ```json
 {
   "statusLine": {
@@ -46,9 +57,7 @@ Or use the GitHub version directly:
 }
 ```
 
-### Step 2: Restart Claude Code
-
-**That's it!** Your statusline will now show real-time context usage.
+Then restart Claude Code.
 
 ### How It Works
 

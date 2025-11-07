@@ -1,13 +1,15 @@
 {
   "name": "claude-statusline-1m",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Claude Code statusline with dynamic 1M context support and premium pricing alerts",
-  "main": "statusline.js",
+  "main": "cli.js",
   "bin": {
-    "claude-statusline-1m": "statusline.js"
+    "claude-statusline-1m": "cli.js"
   },
   "files": [
+    "cli.js",
     "statusline.js",
+    "install-cli.js",
     "scripts/"
   ],
   "scripts": {
