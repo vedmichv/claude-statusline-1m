@@ -1,19 +1,40 @@
 {
   "name": "claude-statusline-1m",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Claude Code statusline with dynamic 1M context support and premium pricing alerts",
+  "main": "statusline.js",
   "bin": {
-    "claude-statusline-1m": "install.js"
+    "claude-statusline-1m": "statusline.js"
   },
   "files": [
-    "install.js",
+    "statusline.js",
     "scripts/"
   ],
+  "scripts": {
+    "test": "echo '{\"model\":{\"id\":\"test[1m]\",\"display_name\":\"Claude\"},\"workspace\":{\"current_dir\":\"/tmp\"},\"transcript_path\":\"\"}' | node statusline.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vedmichv/claude-statusline-1m.git"
+  },
+  "homepage": "https://github.com/vedmichv/claude-statusline-1m#readme",
+  "bugs": {
+    "url": "https://github.com/vedmichv/claude-statusline-1m/issues"
+  },
   "keywords": [
+    "claude",
     "claude-code",
     "statusline",
-    "cli"
+    "cli",
+    "context",
+    "monitoring",
+    "anthropic",
+    "1m-context",
+    "ai"
   ],
   "author": "viktor",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
 }

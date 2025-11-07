@@ -12,25 +12,69 @@ Dynamic context window detection for Claude Code statusline that automatically a
 
 ## Installation
 
-### Via NPX (if published to npm)
+### Step 1: Add Configuration
+
+Add this to your `.claude/settings.local.json`:
+
+**Project-level** (recommended - only for current project):
 ```bash
-npx claude-statusline-1m
+# Create/edit .claude/settings.local.json in your project directory
 ```
 
-### Via GitHub
+**Global** (all projects):
 ```bash
-npx github:vedmichv/claude-statusline-1m
+# Create/edit ~/.claude/settings.local.json
 ```
 
-### Local Testing
-```bash
-cd ~/Documents/claude-statusline-1m
-node install.js
+**Configuration:**
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "npx -y claude-statusline-1m"
+  }
+}
 ```
 
-## How It Works
+Or use the GitHub version directly:
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "npx -y github:vedmichv/claude-statusline-1m"
+  }
+}
+```
 
-The script detects your model's context window from the model ID:
+### Step 2: Restart Claude Code
+
+**That's it!** Your statusline will now show real-time context usage.
+
+### How It Works
+
+- 🚀 NPX downloads and caches the package automatically
+- ⚡ Claude Code runs it on every session
+- 📦 No installation script needed - runs directly from cache
+- 🌍 Works at project OR global level
+- 🔄 Always uses the cached version for fast startup
+
+### Quick Test
+
+Test the statusline before configuring:
+
+```bash
+# Test with npm package
+echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_dir":"/tmp"},"transcript_path":""}' | npx -y claude-statusline-1m
+
+# Test with GitHub version
+echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_dir":"/tmp"},"transcript_path":""}' | npx -y github:vedmichv/claude-statusline-1m
+```
+
+Expected output: `[Claude] 📁 tmp 🧠 🔵 ???`
+
+## Context Window Detection
+
+The script automatically detects your model's context window from the model ID:
 
 - `model[1m]` → 1,000,000 tokens
 - `model[200k]` → 200,000 tokens
