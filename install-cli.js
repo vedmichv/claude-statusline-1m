@@ -135,9 +135,10 @@ async function installStatusline() {
     }
 
     // Add statusLine configuration
+    // IMPORTANT: Always use absolute paths for reliability (as per CLAUDE.md)
     const pythonPath = installLocation === 'global'
       ? path.join(os.homedir(), '.claude', 'scripts', 'context-monitor.py')
-      : path.join('.claude', 'scripts', 'context-monitor.py');
+      : path.join(process.cwd(), '.claude', 'scripts', 'context-monitor.py');
 
     settings.statusLine = {
       type: 'command',
