@@ -8,6 +8,83 @@ import json
 import sys
 import os
 import re
+import subprocess
+
+def shorten_model_name(model_name, model_id):
+    """Shorten model name to be more compact.
+
+    Examples:
+        'Claude Sonnet 4.5' + 'xxx[1m]' -> 'Sonnet 4.5 [1M]'
+        'Claude Opus 3.5' + 'xxx[200k]' -> 'Opus 3.5 [200K]'
+        'global.anthropic.claude-sonnet-4-5-xxx[1m]' -> 'Sonnet 4.5 [1M]'
+    """
+    # Extract model type (Sonnet, Opus, Haiku)
+    model_type = None
+    for t in ['Sonnet', 'Opus', 'Haiku']:
+        if t.lower() in model_name.lower() or t.lower() in model_id.lower():
+            model_type = t
+            break
+
+    if not model_type:
+        # If can't detect, use display name but limit length
+        return model_name[:20] if len(model_name) > 20 else model_name
+
+    # Extract version number (e.g., "4.5", "3.5")
+    # Try model_name first, then model_id
+    version_match = re.search(r'(\d+)[.-](\d+)', model_name)
+    if not version_match:
+        version_match = re.search(r'(\d+)-(\d+)', model_id)
+
+    version = f"{version_match.group(1)}.{version_match.group(2)}" if version_match else ""
+
+    # Extract context window from model_id
+    context_suffix = ""
+    context_match = re.search(r'\[(\d+)(m|k)\]', model_id.lower())
+    if context_match:
+        num = context_match.group(1)
+        unit = context_match.group(2).upper()
+        context_suffix = f" [{num}{unit}]"
+
+    # Build shortened name
+    result = f"{model_type}"
+    if version:
+        result += f" {version}"
+    result += context_suffix
+
+    return result
+
+def get_keyboard_layout():
+    """Get current keyboard layout on macOS.
+
+    Returns:
+        str: Emoji indicator only for non-English layouts (empty string for EN).
+             Non-English: '😱' (screaming face) - "ааа, не та раскладка!"
+    """
+    try:
+        # Method: Use osascript to get current keyboard layout
+        result = subprocess.run(
+            ['osascript', '-e', 'tell application "System Events" to return name of (first keyboard whose selected is true)'],
+            capture_output=True,
+            text=True,
+            timeout=1.0
+        )
+
+        if result.returncode == 0:
+            layout = result.stdout.strip().lower()
+            # Check for non-English layouts
+            if 'russian' in layout or 'ru' in layout or 'cyrillic' in layout:
+                return "😱"  # Screaming face - "ааа, русская!"
+            elif 'english' in layout or 'u.s.' in layout or 'abc' in layout:
+                return ""  # English - no indicator to save space
+            else:
+                # Any other non-English layout
+                return "😱"
+
+    except Exception:
+        pass
+
+    # Default to empty (English is most common)
+    return ""
 
 def get_context_window_size(model_id):
     """Extract context window size from model ID.
@@ -237,16 +314,20 @@ def main():
         transcript_path = data.get('transcript_path', '')
         cost_data = data.get('cost', {})
 
+        # Shorten model name for compact display
+        model_name_short = shorten_model_name(model_name, model_id)
+
         # Detect context window size from model ID
         context_window = get_context_window_size(model_id)
 
         # Parse context usage with dynamic context window
         context_info = parse_context_from_transcript(transcript_path, context_window)
-        
+
         # Build status components
         context_display = get_context_display(context_info)
         directory = get_directory_display(workspace)
         session_metrics = get_session_metrics(cost_data)
+        keyboard_layout = get_keyboard_layout()
         
         # Model display with context-aware coloring
         if context_info:
@@ -257,13 +338,14 @@ def main():
                 model_color = "\033[33m"  # Yellow
             else:
                 model_color = "\033[32m"  # Green
-            
-            model_display = f"{model_color}[{model_name}]\033[0m"
+
+            model_display = f"{model_color}[{model_name_short}]\033[0m"
         else:
-            model_display = f"\033[94m[{model_name}]\033[0m"
-        
-        # Combine all components
-        status_line = f"{model_display} \033[93m📁 {directory}\033[0m 🧠 {context_display}{session_metrics}"
+            model_display = f"\033[94m[{model_name_short}]\033[0m"
+
+        # Combine all components with keyboard layout indicator (only if non-English)
+        layout_indicator = f" {keyboard_layout}" if keyboard_layout else ""
+        status_line = f"{model_display} \033[93m📁 {directory}\033[0m 🧠 {context_display}{session_metrics}{layout_indicator}"
         
         print(status_line)
         
