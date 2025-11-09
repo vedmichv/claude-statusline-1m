@@ -61,24 +61,32 @@ def get_keyboard_layout():
              Non-English: '😱' (screaming face) - "ааа, не та раскладка!"
     """
     try:
-        # Method: Use osascript to get current keyboard layout
+        # Method: Read keyboard layout from system preferences
         result = subprocess.run(
-            ['osascript', '-e', 'tell application "System Events" to return name of (first keyboard whose selected is true)'],
+            ['defaults', 'read', 'com.apple.HIToolbox', 'AppleCurrentKeyboardLayoutInputSourceID'],
             capture_output=True,
             text=True,
-            timeout=1.0
+            timeout=0.5
         )
 
         if result.returncode == 0:
             layout = result.stdout.strip().lower()
             # Check for non-English layouts
-            if 'russian' in layout or 'ru' in layout or 'cyrillic' in layout:
+            # Examples: com.apple.keylayout.Russian, com.apple.keylayout.RussianWin, com.apple.keylayout.ABC
+
+            # Russian/Cyrillic layouts - check FIRST (before US check!)
+            if 'russian' in layout or '.ru' in layout or 'cyrillic' in layout:
                 return "😱"  # Screaming face - "ааа, русская!"
-            elif 'english' in layout or 'u.s.' in layout or 'abc' in layout:
+
+            # English layouts - no indicator
+            if '.abc' in layout or '.us' in layout or 'english' in layout or layout.endswith('abc'):
                 return ""  # English - no indicator to save space
-            else:
-                # Any other non-English layout
-                return "😱"
+
+            # Any other keyboard layout (non-English)
+            if 'keylayout' in layout:
+                return "😱"  # Other non-English layout
+
+            return ""
 
     except Exception:
         pass
