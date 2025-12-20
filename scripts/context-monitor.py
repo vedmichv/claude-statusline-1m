@@ -189,7 +189,7 @@ def parse_context_from_transcript(transcript_path, context_window=200000):
     except (FileNotFoundError, PermissionError):
         return None
 
-def get_context_display(context_info):
+def get_context_display(context_info, model_id=""):
     """Generate context display with visual indicators."""
     if not context_info:
         return "🔵 ???"
@@ -228,9 +228,12 @@ def get_context_display(context_info):
         alert = "LOW!"
 
     # Premium pricing warning (>200K tokens = 2x cost)
+    # Note: Long context pricing only applies to Sonnet 4/4.5, NOT to Opus models
+    # Opus 4.5 has flat pricing ($5/$25) regardless of token count
     premium_pricing = ""
-    if context_window >= 1000000 and tokens > 200000:
-        premium_pricing = " \033[33m💸2x\033[0m"  # Indicator for premium pricing
+    is_sonnet = 'sonnet' in model_id.lower()
+    if context_window >= 1000000 and tokens > 200000 and is_sonnet:
+        premium_pricing = " \033[33m💸2x\033[0m"  # Indicator for premium pricing (Sonnet only)
 
     reset = "\033[0m"
     alert_str = f" {alert}" if alert else ""
@@ -332,7 +335,7 @@ def main():
         context_info = parse_context_from_transcript(transcript_path, context_window)
 
         # Build status components
-        context_display = get_context_display(context_info)
+        context_display = get_context_display(context_info, model_id)
         directory = get_directory_display(workspace)
         session_metrics = get_session_metrics(cost_data)
         keyboard_layout = get_keyboard_layout()

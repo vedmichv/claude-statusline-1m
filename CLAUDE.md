@@ -10,7 +10,7 @@ This is a Claude Code statusline extension that provides real-time context usage
 - Session cost tracking
 - Duration monitoring
 - Lines changed tracking
-- Premium pricing alerts (💸2x indicator when >200K tokens)
+- Premium pricing alerts (💸2x indicator when >200K tokens on Sonnet models only)
 
 The tool automatically detects the model's context window size from suffixes like `[1m]` or `[200k]` in the model ID.
 
@@ -58,9 +58,10 @@ The tool automatically detects the model's context window size from suffixes lik
 - Reads last 15 lines of transcript file in reverse
 - Calculates percentage based on detected context window size
 
-**Premium Pricing Alert** (scripts/context-monitor.py:145-148)
-- Shows `💸2x` indicator when tokens > 200K on 1M models
-- Warns users about tiered pricing (2x input rate above 200K tokens)
+**Premium Pricing Alert** (scripts/context-monitor.py:230-236)
+- Shows `💸2x` indicator when tokens > 200K on Sonnet 4/4.5 models ONLY
+- Long context pricing applies exclusively to Sonnet models, NOT to Opus
+- Opus 4.5 has flat pricing ($5/$25 per MTok) regardless of token count
 
 ## Development Commands
 
@@ -154,10 +155,13 @@ echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_d
 
 ## Pricing Context (Critical for Development)
 
-Both Anthropic API and AWS Bedrock use tiered pricing for 1M context models:
+**Claude Sonnet 4/4.5** (1M context available):
 - ≤ 200K tokens: $3/M input, $15/M output (standard)
 - > 200K tokens: $6/M input, $22.50/M output (premium - 2x/1.5x)
+- **Critical**: When exceeding 200K tokens, ALL tokens in that request are charged at the premium rate.
 
-**Critical**: When exceeding 200K tokens, ALL tokens in that request are charged at the premium rate.
+**Claude Opus 4.5** (200K context only):
+- Flat pricing: $5/M input, $25/M output (no tiered pricing)
+- 1M context window is NOT available for Opus models
 
-This is why the `💸2x` indicator is shown when `tokens > 200000` on models with `context_window >= 1000000`.
+The `💸2x` indicator is shown ONLY for Sonnet models when `tokens > 200000` on 1M context.
