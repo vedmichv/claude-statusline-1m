@@ -10,7 +10,7 @@ This is a Claude Code statusline extension that provides real-time context usage
 - Session cost tracking
 - Duration monitoring
 - Lines changed tracking
-- Premium pricing alerts (💸2x indicator when >200K tokens on Sonnet models only)
+- Premium pricing alerts (💸2x indicator when >200K tokens on legacy pre-4.6 Sonnet models only; 4.6 models have flat Bedrock pricing)
 
 The tool automatically detects the model's context window size from suffixes like `[1m]` or `[200k]` in the model ID.
 
@@ -58,10 +58,10 @@ The tool automatically detects the model's context window size from suffixes lik
 - Reads last 15 lines of transcript file in reverse
 - Calculates percentage based on detected context window size
 
-**Premium Pricing Alert** (scripts/context-monitor.py:230-236)
-- Shows `💸2x` indicator when tokens > 200K on Sonnet 4/4.5 models ONLY
-- Long context pricing applies exclusively to Sonnet models, NOT to Opus
-- Opus 4.5 has flat pricing ($5/$25 per MTok) regardless of token count
+**Premium Pricing Alert** (scripts/context-monitor.py:230-238)
+- Shows `💸2x` indicator ONLY for legacy pre-4.6 Sonnet models when tokens > 200K on 1M context
+- Sonnet 4.6 and Opus 4.6 have **flat Bedrock pricing** — no long-context surcharge
+- Legacy Sonnet 4.5 with 1M context still has 2x surcharge above 200K tokens
 
 ## Development Commands
 
@@ -153,15 +153,23 @@ echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_d
 }
 ```
 
-## Pricing Context (Critical for Development)
+## Pricing Context — Bedrock (Critical for Development)
 
-**Claude Sonnet 4/4.5** (1M context available):
+**Claude Sonnet 4.6** (1M context, flat pricing):
+- $3/M input, $15/M output, $0.30/M cache read
+- **No long-context surcharge** — same rate across the entire 1M window
+
+**Claude Opus 4.6** (1M context, flat pricing):
+- $5/M input, $25/M output, $0.50/M cache read
+- **No long-context surcharge** — same rate across the entire 1M window
+
+**Claude Haiku 4.5**:
+- $1/M input, $5/M output, $0.10/M cache read
+
+**Legacy: Claude Sonnet 4.5** (1M context available):
 - ≤ 200K tokens: $3/M input, $15/M output (standard)
 - > 200K tokens: $6/M input, $22.50/M output (premium - 2x/1.5x)
 - **Critical**: When exceeding 200K tokens, ALL tokens in that request are charged at the premium rate.
 
-**Claude Opus 4.5** (200K context only):
-- Flat pricing: $5/M input, $25/M output (no tiered pricing)
-- 1M context window is NOT available for Opus models
-
-The `💸2x` indicator is shown ONLY for Sonnet models when `tokens > 200000` on 1M context.
+The `💸2x` indicator is shown ONLY for legacy (pre-4.6) Sonnet models when `tokens > 200000` on 1M context.
+4.6 models have no surcharge — the indicator is suppressed.

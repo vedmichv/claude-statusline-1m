@@ -227,13 +227,14 @@ def get_context_display(context_info, model_id=""):
     elif warning == 'low':
         alert = "LOW!"
 
-    # Premium pricing warning (>200K tokens = 2x cost)
-    # Note: Long context pricing only applies to Sonnet 4/4.5, NOT to Opus models
-    # Opus 4.5 has flat pricing ($5/$25) regardless of token count
+    # Premium pricing warning (>200K tokens = 2x cost on Bedrock)
+    # As of March 2026: Opus 4.6 and Sonnet 4.6 have NO long-context surcharge (flat pricing at 1M)
+    # Legacy Sonnet 4.5 with 1M context still has 2x surcharge above 200K tokens
     premium_pricing = ""
     is_sonnet = 'sonnet' in model_id.lower()
-    if context_window >= 1000000 and tokens > 200000 and is_sonnet:
-        premium_pricing = " \033[33m💸2x\033[0m"  # Indicator for premium pricing (Sonnet only)
+    is_46 = '4-6' in model_id or '4.6' in model_id
+    if context_window >= 1000000 and tokens > 200000 and is_sonnet and not is_46:
+        premium_pricing = " \033[33m💸2x\033[0m"  # Indicator for premium pricing (legacy Sonnet only)
 
     reset = "\033[0m"
     alert_str = f" {alert}" if alert else ""
