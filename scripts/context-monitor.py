@@ -18,9 +18,9 @@ def shorten_model_name(model_name, model_id):
         'Claude Opus 3.5' + 'xxx[200k]' -> 'Opus 3.5 [200K]'
         'global.anthropic.claude-sonnet-4-5-xxx[1m]' -> 'Sonnet 4.5 [1M]'
     """
-    # Extract model type (Sonnet, Opus, Haiku)
+    # Extract model type (Fable/Mythos first: 'fable' could coexist with legacy names)
     model_type = None
-    for t in ['Sonnet', 'Opus', 'Haiku']:
+    for t in ['Fable', 'Mythos', 'Sonnet', 'Opus', 'Haiku']:
         if t.lower() in model_name.lower() or t.lower() in model_id.lower():
             model_type = t
             break
@@ -29,13 +29,19 @@ def shorten_model_name(model_name, model_id):
         # If can't detect, use display name but limit length
         return model_name[:20] if len(model_name) > 20 else model_name
 
-    # Extract version number (e.g., "4.5", "3.5")
+    # Extract version number: two-part ("4.5") or single-digit ("5" in Sonnet 5 / Fable 5)
     # Try model_name first, then model_id
-    version_match = re.search(r'(\d+)[.-](\d+)', model_name)
+    version = ""
+    version_match = re.search(r'(\d+)[.-](\d{1,2})(?!\d)', model_name)
     if not version_match:
-        version_match = re.search(r'(\d+)-(\d+)', model_id)
-
-    version = f"{version_match.group(1)}.{version_match.group(2)}" if version_match else ""
+        version_match = re.search(r'(\d+)-(\d{1,2})(?!\d)', model_id)
+    if version_match:
+        version = f"{version_match.group(1)}.{version_match.group(2)}"
+    else:
+        single_match = re.search(rf'{model_type.lower()}[ -](\d+)\b', model_name.lower()) \
+            or re.search(rf'{model_type.lower()}-(\d+)\b', model_id.lower())
+        if single_match:
+            version = single_match.group(1)
 
     # Extract context window from model_id
     context_suffix = ""
@@ -60,6 +66,9 @@ def get_keyboard_layout():
         str: Emoji indicator only for non-English layouts (empty string for EN).
              Non-English: '😱' (screaming face) - "ааа, не та раскладка!"
     """
+    if sys.platform != 'darwin':
+        return ""  # 'defaults' is macOS-only; skip the subprocess spawn elsewhere
+
     try:
         # Method: Read keyboard layout from system preferences
         result = subprocess.run(
@@ -126,8 +135,18 @@ def parse_context_from_transcript(transcript_path, context_window=200000):
         return None
 
     try:
-        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as f:
-            lines = f.readlines()
+        # Tail-read: transcripts grow to hundreds of MB on 1M-context sessions,
+        # and the statusline re-runs constantly — never load the whole file.
+        with open(transcript_path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 262144))  # last 256KB is plenty for 15 lines
+            tail = f.read().decode('utf-8', errors='replace')
+
+        lines = tail.splitlines()
+        # First line may be a partial JSON record cut by the seek — drop it
+        if size > 262144 and lines:
+            lines = lines[1:]
 
         # Check last 15 lines for context information
         recent_lines = lines[-15:] if len(lines) > 15 else lines
@@ -189,6 +208,37 @@ def parse_context_from_transcript(transcript_path, context_window=200000):
     except (FileNotFoundError, PermissionError):
         return None
 
+def has_long_context_surcharge(model_id):
+    """Whether this model bills >200K-token requests at a premium rate.
+
+    Verified July 2026 (Bedrock + Anthropic API pricing pages):
+    - Fable 5 / Mythos 5, Opus 4.8/4.7/4.6, Sonnet 5, Sonnet 4.6:
+      flat pricing across the full 1M window — NO surcharge.
+    - Legacy Sonnet 4 / 4.5 with [1m] context: 2x input / 1.5x output
+      above 200K tokens (Bedrock bills these as LCtx line items).
+    """
+    mid = model_id.lower()
+    if 'sonnet' not in mid:
+        return False
+
+    # Parse "sonnet-4-5", "sonnet-4-20250514" (-> 4.0), "sonnet-5"
+    m = re.search(r'sonnet-(\d+)(?:-(\d{1,2}))?(?=$|[^\d])', mid)
+    if not m:
+        return False
+
+    major = int(m.group(1))
+    minor = int(m.group(2)) if m.group(2) else 0
+    return (major, minor) < (4, 6)
+
+def format_token_count(tokens):
+    """Compact token count: 950 -> '950', 245000 -> '245K', 1200000 -> '1.2M'."""
+    if tokens >= 1000000:
+        millions = tokens / 1000000
+        return f"{millions:.0f}M" if millions == int(millions) else f"{millions:.1f}M"
+    if tokens >= 1000:
+        return f"{tokens // 1000}K"
+    return str(tokens)
+
 def get_context_display(context_info, model_id=""):
     """Generate context display with visual indicators."""
     if not context_info:
@@ -227,19 +277,21 @@ def get_context_display(context_info, model_id=""):
     elif warning == 'low':
         alert = "LOW!"
 
-    # Premium pricing warning (>200K tokens = 2x cost on Bedrock)
-    # As of March 2026: Opus 4.6 and Sonnet 4.6 have NO long-context surcharge (flat pricing at 1M)
-    # Legacy Sonnet 4.5 with 1M context still has 2x surcharge above 200K tokens
+    # Premium pricing warning: only legacy Sonnet (< 4.6) bills >200K at 2x on Bedrock
     premium_pricing = ""
-    is_sonnet = 'sonnet' in model_id.lower()
-    is_46 = '4-6' in model_id or '4.6' in model_id
-    if context_window >= 1000000 and tokens > 200000 and is_sonnet and not is_46:
-        premium_pricing = " \033[33m💸2x\033[0m"  # Indicator for premium pricing (legacy Sonnet only)
+    if context_window >= 1000000 and tokens > 200000 and has_long_context_surcharge(model_id):
+        premium_pricing = " \033[33m💸2x\033[0m"
+
+    # Token count next to percentage, e.g. "245K/1M" — percent alone hides scale on 1M models
+    tokens_str = ""
+    if tokens > 0:
+        window_str = format_token_count(context_window)
+        tokens_str = f" \033[90m{format_token_count(tokens)}/{window_str}\033[0m"
 
     reset = "\033[0m"
     alert_str = f" {alert}" if alert else ""
 
-    return f"{icon}{color}{bar}{reset} {percent:.0f}%{alert_str}{premium_pricing}"
+    return f"{icon}{color}{bar}{reset} {percent:.0f}%{tokens_str}{alert_str}{premium_pricing}"
 
 def get_directory_display(workspace_data):
     """Get directory display name."""

@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-
 // Check if being run as statusline (stdin has data from Claude Code)
 // or as installer (user running with --install flag)
 
@@ -43,9 +39,9 @@ Claude Code Statusline with 1M Context Support
 🎯 FEATURES
 
   • Dynamic context window detection (1M, 200K)
-  • Real-time context usage percentage
+  • Real-time context usage percentage + token count
   • Session cost and duration tracking
-  • Premium pricing alert (💸2x when >200K tokens)
+  • Premium pricing alert (💸2x, legacy Sonnet 4/4.5 only)
   • Color-coded visual indicators
 
 📖 DOCUMENTATION

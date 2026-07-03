@@ -7,10 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a Claude Code statusline extension that provides real-time context usage monitoring with dynamic 1M context window support. It installs a Python-based statusline script that displays:
 
 - Context usage percentage with visual indicators (progress bar + emoji)
+- Token count display (e.g. `245K/1M`) next to the percentage
 - Session cost tracking
 - Duration monitoring
 - Lines changed tracking
-- Premium pricing alerts (💸2x indicator when >200K tokens on legacy pre-4.6 Sonnet models only; 4.6 models have flat Bedrock pricing)
+- Premium pricing alerts (💸2x indicator when >200K tokens on legacy pre-4.6 Sonnet models only; Fable 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 have flat Bedrock pricing)
 
 The tool automatically detects the model's context window size from suffixes like `[1m]` or `[200k]` in the model ID.
 
@@ -58,10 +59,11 @@ The tool automatically detects the model's context window size from suffixes lik
 - Reads last 15 lines of transcript file in reverse
 - Calculates percentage based on detected context window size
 
-**Premium Pricing Alert** (scripts/context-monitor.py:230-238)
-- Shows `💸2x` indicator ONLY for legacy pre-4.6 Sonnet models when tokens > 200K on 1M context
-- Sonnet 4.6 and Opus 4.6 have **flat Bedrock pricing** — no long-context surcharge
-- Legacy Sonnet 4.5 with 1M context still has 2x surcharge above 200K tokens
+**Premium Pricing Alert** (`has_long_context_surcharge()` in scripts/context-monitor.py)
+- Shows `💸2x` indicator ONLY for legacy Sonnet < 4.6 when tokens > 200K on 1M context
+- Fable 5, Sonnet 5, Opus 4.6/4.7/4.8, Sonnet 4.6: **flat Bedrock pricing** — no long-context surcharge
+- Legacy Sonnet 4 / 4.5 with 1M context still has 2x surcharge above 200K tokens
+- Version comparison is numeric (`(major, minor) < (4, 6)`), so future Sonnet versions stay flat automatically
 
 ## Development Commands
 
@@ -155,21 +157,42 @@ echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_d
 
 ## Pricing Context — Bedrock (Critical for Development)
 
-**Claude Sonnet 4.6** (1M context, flat pricing):
-- $3/M input, $15/M output, $0.30/M cache read
-- **No long-context surcharge** — same rate across the entire 1M window
+Verified July 2026 against aws.amazon.com/bedrock/pricing and platform.claude.com/docs/en/pricing.
 
-**Claude Opus 4.6** (1M context, flat pricing):
+**Claude Fable 5 / Mythos 5** (1M context, flat pricing):
+- $10/M input, $50/M output, $1/M cache read
+- **No long-context surcharge** — full 1M window at standard rates
+- Bedrock quirk: harmful prompts fall back to Opus 4.8 and are billed at Opus rates
+
+**Claude Sonnet 5** (1M context, flat pricing):
+- Intro through 2026-08-31: $2/M input, $10/M output, $0.20/M cache read
+- From 2026-09-01: $3/M input, $15/M output, $0.30/M cache read
+- **No long-context surcharge** — full 1M window at standard rates
+- Note: new tokenizer produces ~30% more tokens for the same text vs Sonnet 4.6
+
+**Claude Opus 4.8 / 4.7 / 4.6** (1M context, flat pricing):
 - $5/M input, $25/M output, $0.50/M cache read
-- **No long-context surcharge** — same rate across the entire 1M window
+- **No long-context surcharge**
 
-**Claude Haiku 4.5**:
+**Claude Sonnet 4.6** (1M context, flat pricing):
+- $3/M input, $15/M output, $0.30/M cache read — no surcharge
+
+**Claude Haiku 4.5** (200K context):
 - $1/M input, $5/M output, $0.10/M cache read
 
-**Legacy: Claude Sonnet 4.5** (1M context available):
+**Legacy: Claude Sonnet 4 / 4.5 on the old 1M beta — the ONLY surcharge path, now grandfathered:**
 - ≤ 200K tokens: $3/M input, $15/M output (standard)
-- > 200K tokens: $6/M input, $22.50/M output (premium - 2x/1.5x)
+- > 200K tokens: $6/M input, $22.50/M output (premium — 2x/1.5x; Bedrock billed these as `*_LCtx` line items)
 - **Critical**: When exceeding 200K tokens, ALL tokens in that request are charged at the premium rate.
+- As of July 2026 this tier is GONE from the current Bedrock pricing page — the Sonnet 4.5 1M beta
+  appears retired (Anthropic docs list 4.5 as 200K again). Whether grandfathered accounts still
+  sending the old 1M beta header get surcharged is unverified; the indicator stays as a conservative
+  alert for exactly that case.
 
-The `💸2x` indicator is shown ONLY for legacy (pre-4.6) Sonnet models when `tokens > 200000` on 1M context.
-4.6 models have no surcharge — the indicator is suppressed.
+Regional (non-global) Bedrock endpoints (`us.anthropic.*` etc.) cost +10% over global prices.
+GovCloud Opus 4.8: $6/$30, $0.60 cache read.
+
+The `💸2x` indicator logic lives in `has_long_context_surcharge()` (scripts/context-monitor.py): it fires
+only for Sonnet models with version < 4.6 when `tokens > 200000` on a 1M window — which can only occur
+on a grandfathered 1M-beta session. Fable 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 all have flat pricing —
+the indicator is suppressed for them.

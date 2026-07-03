@@ -142,7 +142,7 @@ async function installStatusline() {
 
     settings.statusLine = {
       type: 'command',
-      command: `python3 ${pythonPath}`
+      command: `python3 "${pythonPath}"`
     };
 
     // Write settings
@@ -159,9 +159,9 @@ async function installStatusline() {
     log('', 'reset');
     log('🎯 Features Enabled:', 'cyan');
     log('  • Dynamic context window detection (1M, 200K)', 'reset');
-    log('  • Real-time context usage percentage', 'reset');
+    log('  • Real-time context usage percentage + token count', 'reset');
     log('  • Session cost and duration tracking', 'reset');
-    log('  • Premium pricing alert (💸2x when >200K)', 'reset');
+    log('  • Premium pricing alert (💸2x, legacy Sonnet 4/4.5 only)', 'reset');
     log('', 'reset');
     log('🔄 Next Step: Restart Claude Code to see your statusline!', 'yellow');
     log('', 'reset');

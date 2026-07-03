@@ -6,8 +6,9 @@ Dynamic context window detection for Claude Code statusline that automatically a
 
 - 🎯 **Dynamic Context Detection**: Automatically detects `[1m]`, `[200k]`, etc. suffixes
 - 📊 **Accurate Percentages**: Shows correct context usage for 1M and 200K models
+- 🔢 **Token Count**: Shows absolute usage next to the percentage (e.g. `25% 250K/1M`)
 - 💰 **Session Metrics**: Cost tracking and duration monitoring
-- 💸 **Premium Pricing Alert**: Shows "💸2x" indicator when exceeding 200K tokens (2x pricing tier)
+- 💸 **Premium Pricing Alert**: Shows "💸2x" only for legacy Sonnet 4/4.5 above 200K tokens (current models have flat 1M pricing)
 - 🎨 **Color-coded Alerts**: Visual warnings at 50%, 75%, 90%, 95% usage
 
 ## Installation
@@ -91,24 +92,30 @@ The script automatically detects your model's context window from the model ID:
 
 ## Supported Models
 
-- ✅ Claude Sonnet 4.5 with 1M context (`[1m]`)
-- ✅ Claude Sonnet 4 with 1M context (`[1m]`)
+- ✅ Claude Fable 5 / Mythos 5 (`[1m]`)
+- ✅ Claude Sonnet 5 (`[1m]`)
+- ✅ Claude Opus 4.6 / 4.7 / 4.8 (`[1m]`)
+- ✅ Claude Sonnet 4.6 (`[1m]`)
+- ✅ Legacy Claude Sonnet 4 / 4.5 with 1M context (`[1m]`) — with 💸2x premium alert
+- ✅ Claude Haiku 4.5 (200K)
 - ✅ Any future models with `[XM]` or `[Xk]` suffixes
 
-## Pricing Information
+## Pricing Information (Amazon Bedrock, July 2026)
 
-### Both Anthropic API & AWS Bedrock
+| Model | Input | Output | >200K surcharge |
+|-------|-------|--------|-----------------|
+| Fable 5 / Mythos 5 | $10/M | $50/M | None (flat 1M) |
+| Sonnet 5 | $2/M intro → $3/M | $10/M intro → $15/M | None (flat 1M) |
+| Opus 4.8 / 4.7 / 4.6 | $5/M | $25/M | None (flat 1M) |
+| Sonnet 4.6 | $3/M | $15/M | None (flat 1M) |
+| Haiku 4.5 | $1/M | $5/M | — (200K window) |
+| **Legacy Sonnet 4 / 4.5 on the old 1M beta** | $3/M → **$6/M** | $15/M → **$22.50/M** | **2x input / 1.5x output above 200K** (grandfathered only) |
 
-Claude Sonnet 4/4.5 with 1M context has **tiered pricing**:
+Sonnet 5 introductory pricing ($2/$10) runs through August 31, 2026. Regional (non-global) Bedrock endpoints cost +10% over the prices above.
 
-| Token Range | Input | Output | Notes |
-|-------------|-------|--------|-------|
-| ≤ 200K tokens | $3/M | $15/M | Standard rate |
-| > 200K tokens | $6/M | $22.50/M | Premium rate (2x input, 1.5x output) |
+⚠️ **Legacy note**: the Sonnet 4/4.5 1M-context beta appears retired — the current Bedrock pricing page no longer lists the >200K tier, and Anthropic docs list Sonnet 4.5 as a 200K model again. The surcharge can only still apply to grandfathered sessions that run Sonnet < 4.6 with a `[1m]` model ID. For those, when you exceed 200K tokens, **ALL tokens** in that request are charged at the premium rate, not just the excess.
 
-⚠️ **Critical**: When you exceed 200K tokens, **ALL tokens** in that request are charged at the premium rate, not just the excess.
-
-The statusline displays a **💸2x** indicator when you cross into premium pricing territory (>200K tokens).
+The statusline displays a **💸2x** indicator only in exactly that case (Sonnet < 4.6 on a 1M window above 200K tokens) — a conservative alert for grandfathered sessions. Current models (Fable 5, Sonnet 5, Opus 4.x, Sonnet 4.6) have flat pricing across the full 1M window, so no indicator is shown.
 
 ## Requirements
 
