@@ -10,6 +10,7 @@ Dynamic context window detection for Claude Code statusline that automatically a
 - 💰 **Session Metrics**: Cost tracking and duration monitoring
 - 💸 **Premium Pricing Alert**: Shows "💸2x" only for legacy Sonnet 4/4.5 above 200K tokens (current models have flat 1M pricing)
 - 🎨 **Color-coded Alerts**: Visual warnings at 50%, 75%, 90%, 95% usage
+- 😱 **Keyboard Layout Indicator** (macOS): screaming-face emoji when a non-English layout is active — catches "ааа, не та раскладка!" before you type
 
 ## Installation
 

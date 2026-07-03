@@ -34,12 +34,15 @@ def shorten_model_name(model_name, model_id):
     version = ""
     version_match = re.search(r'(\d+)[.-](\d{1,2})(?!\d)', model_name)
     if not version_match:
-        version_match = re.search(r'(\d+)-(\d{1,2})(?!\d)', model_id)
+        version_match = re.search(r'(\d+)[.-](\d{1,2})(?!\d)', model_id)
     if version_match:
         version = f"{version_match.group(1)}.{version_match.group(2)}"
     else:
-        single_match = re.search(rf'{model_type.lower()}[ -](\d+)\b', model_name.lower()) \
-            or re.search(rf'{model_type.lower()}-(\d+)\b', model_id.lower())
+        # \d{1,2} keeps dates out: 'claude-3-opus-20240229' must not render
+        # as 'Opus 20240229'. re.escape future-proofs the type interpolation.
+        mt = re.escape(model_type.lower())
+        single_match = re.search(rf'{mt}[ -](\d{{1,2}})\b', model_name.lower()) \
+            or re.search(rf'{mt}-(\d{{1,2}})\b', model_id.lower())
         if single_match:
             version = single_match.group(1)
 
@@ -121,10 +124,9 @@ def get_context_window_size(model_id):
         number = int(match.group(1))
         unit = match.group(2)
 
-        if unit == 'm':
-            return number * 1000000
-        elif unit == 'k':
-            return number * 1000
+        size = number * 1000000 if unit == 'm' else number * 1000
+        if size > 0:  # "[0m]" would cause ZeroDivisionError downstream
+            return size
 
     # Default to 200k for older models
     return 200000
@@ -140,16 +142,26 @@ def parse_context_from_transcript(transcript_path, context_window=200000):
         with open(transcript_path, 'rb') as f:
             f.seek(0, os.SEEK_END)
             size = f.tell()
-            f.seek(max(0, size - 262144))  # last 256KB is plenty for 15 lines
+            start = max(0, size - 262144)  # last 256KB is plenty for 50 lines
+            drop_first = False
+            if start > 0:
+                # Peek at the byte before the window: if it isn't a newline,
+                # the window starts mid-record and the first line is partial
+                f.seek(start - 1)
+                drop_first = f.read(1) != b'\n'
+            else:
+                f.seek(0)  # pointer is at EOF after tell(); rewind for small files
             tail = f.read().decode('utf-8', errors='replace')
 
-        lines = tail.splitlines()
-        # First line may be a partial JSON record cut by the seek — drop it
-        if size > 262144 and lines:
+        # split('\n'), not splitlines(): a raw U+2028/NEL inside a JSON string
+        # must not split a record; strip() below absorbs any \r
+        lines = tail.split('\n')
+        if drop_first and lines:
             lines = lines[1:]
 
-        # Check last 15 lines for context information
-        recent_lines = lines[-15:] if len(lines) > 15 else lines
+        # Scan the last 50 lines: hooks, tool results, and system rows can
+        # interleave 15+ non-assistant records after the last usage row
+        recent_lines = lines[-50:] if len(lines) > 50 else lines
 
         for line in reversed(recent_lines):
             try:
@@ -165,8 +177,11 @@ def parse_context_from_transcript(transcript_path, context_window=200000):
                         cache_read = usage.get('cache_read_input_tokens', 0)
                         cache_creation = usage.get('cache_creation_input_tokens', 0)
 
-                        # Calculate context usage based on model's actual context window
+                        # Cache reads/writes ARE input context — excluding them would
+                        # undercount massively (typical row: input=2, cache_read=266710)
                         total_tokens = input_tokens + cache_read + cache_creation
+                        # Deliberate: skip zero-usage rows (streaming placeholders
+                        # would otherwise reset the display to 0%)
                         if total_tokens > 0:
                             percent_used = min(100, (total_tokens / context_window) * 100)
                             return {
@@ -205,7 +220,7 @@ def parse_context_from_transcript(transcript_path, context_window=200000):
         
         return None
         
-    except (FileNotFoundError, PermissionError):
+    except OSError:  # missing file, permissions, path is a directory, ...
         return None
 
 def has_long_context_surcharge(model_id):
@@ -221,12 +236,18 @@ def has_long_context_surcharge(model_id):
     if 'sonnet' not in mid:
         return False
 
-    # Parse "sonnet-4-5", "sonnet-4-20250514" (-> 4.0), "sonnet-5"
-    m = re.search(r'sonnet-(\d+)(?:-(\d{1,2}))?(?=$|[^\d])', mid)
+    # Parse "sonnet-4-5", "sonnet-4.6" (proxy-style dotted), "sonnet-4-20250514"
+    # (-> 4.0), "sonnet-5". The \d{1,2} minor cap keeps date fragments out.
+    m = re.search(r'sonnet[-.](\d+)(?:[.-](\d{1,2}))?(?=$|[^\d])', mid)
     if not m:
         return False
 
     major = int(m.group(1))
+    # "claude-3-5-sonnet-20241022" puts digits BEFORE the word; the regex then
+    # grabs the date as major. Any major > 100 is a date, and 3.x never had a
+    # 1M window anyway — no surcharge.
+    if major > 100:
+        return False
     minor = int(m.group(2)) if m.group(2) else 0
     return (major, minor) < (4, 6)
 
@@ -366,6 +387,13 @@ def get_session_metrics(cost_data):
     return f" \033[90m|\033[0m {' '.join(metrics)}" if metrics else ""
 
 def main():
+    # Emoji output crashes on non-UTF-8 stdout (POSIX-locale Linux/CI) —
+    # and the emoji-bearing fallback would too, defeating the error handler
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
     try:
         # Read JSON input from Claude Code
         data = json.load(sys.stdin)
@@ -414,8 +442,13 @@ def main():
         print(status_line)
         
     except Exception as e:
-        # Fallback display on any error
-        print(f"\033[94m[Claude]\033[0m \033[93m📁 {os.path.basename(os.getcwd())}\033[0m 🧠 \033[31m[Error: {str(e)[:20]}]\033[0m")
+        # Fallback display on any error. Must never throw itself:
+        # emoji-free (survives ASCII stdout), getcwd guarded (cwd can be deleted)
+        try:
+            cwd = os.path.basename(os.getcwd())
+        except OSError:
+            cwd = "?"
+        print(f"\033[94m[Claude]\033[0m \033[93m{cwd}\033[0m \033[31m[Error: {str(e)[:30]}]\033[0m")
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,6 @@
 # Versioning Guidelines
 
-## Current Version: 2.2.4
+## Current Version: 2.2.5
 
 ## Version Format: `MAJOR.MINOR.PATCH`
 
@@ -75,9 +75,12 @@ npm publish
 
 ## Current Version History
 
+- **2.2.5** - 5-agent review fixes: dotted model IDs (proxy-style `sonnet-4.6`) no longer trigger false 💸2x, crash-proof error fallback (ASCII stdout, deleted cwd), exact tail-read boundary detection, 50-line transcript lookback, docs corrections (2026-07-03)
 - **2.2.4** - Sonnet 5 / Fable 5 / Opus 4.8 support: name shortening, verified Bedrock pricing (no >200K surcharge on new models), token count display, tail-read for large transcripts (2026-07-03)
-- **2.2.3** - Bump after Bedrock 4.6 pricing fix (2026)
-- **2.2.0** - Compact model names + keyboard layout indicator (2025-01-09)
-- **2.1.0** - Automatic installation wizard (2024-11-XX)
-- **2.0.1** - Fix stdin handling (2024-11-XX)
-- **2.0.0** - Refactor to self-contained NPX approach (2024-11-XX)
+- **2.2.3** - Bump after Bedrock 4.6 pricing fix (2026-03-21)
+- **2.2.2** - Premium 💸2x indicator restricted to Sonnet models only (2025-12-20)
+- **2.2.1** - Keyboard layout indicator fix (2025-11-09)
+- **2.2.0** - Compact model names + keyboard layout indicator (2025-11-09)
+- **2.1.0** - Automatic installation wizard (2025-11-07)
+- **2.0.1** - Fix stdin handling (2025-11-07)
+- **2.0.0** - Refactor to self-contained NPX approach (2025-11-07)

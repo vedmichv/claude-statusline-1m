@@ -17,7 +17,7 @@ The tool automatically detects the model's context window size from suffixes lik
 
 ## Architecture
 
-### Tri-Part System
+### Four-Part System
 
 1. **cli.js** (Smart Entry Point)
    - Main bin entry executed via `npx claude-statusline-1m`
@@ -49,14 +49,14 @@ The tool automatically detects the model's context window size from suffixes lik
 
 ### Key Technical Details
 
-**Context Window Detection** (scripts/context-monitor.py:12-36)
+**Context Window Detection** (`get_context_window_size()` in scripts/context-monitor.py)
 - Uses regex pattern `\[(\d+)(m|k)\]` to extract context size from model ID
 - Supports both megabyte (`m`) and kilobyte (`k`) suffixes
 - Defaults to 200K tokens if no suffix found
 
-**Context Usage Parsing** (scripts/context-monitor.py:38-105)
+**Context Usage Parsing** (`parse_context_from_transcript()` in scripts/context-monitor.py)
 - Two methods: parses `usage` tokens from assistant messages, or system context warnings
-- Reads last 15 lines of transcript file in reverse
+- Tail-reads the last 256KB of the transcript, then scans the last 15 lines in reverse
 - Calculates percentage based on detected context window size
 
 **Premium Pricing Alert** (`has_long_context_surcharge()` in scripts/context-monitor.py)
@@ -157,12 +157,14 @@ echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_d
 
 ## Pricing Context — Bedrock (Critical for Development)
 
-Verified July 2026 against aws.amazon.com/bedrock/pricing and platform.claude.com/docs/en/pricing.
+Verified July 2026 against aws.amazon.com/bedrock/pricing and platform.claude.com/docs/en/about-claude/pricing.
 
 **Claude Fable 5 / Mythos 5** (1M context, flat pricing):
 - $10/M input, $50/M output, $1/M cache read
 - **No long-context surcharge** — full 1M window at standard rates
-- Bedrock quirk: harmful prompts fall back to Opus 4.8 and are billed at Opus rates
+- Refusals: Fable 5 safety classifiers return `stop_reason: "refusal"`. Server-side fallback is
+  NOT available on Bedrock — clients must opt in via SDK middleware; when a fallback runs, the
+  Opus 4.8 attempt bills at Opus rates, and a pre-output refusal is not billed at all
 
 **Claude Sonnet 5** (1M context, flat pricing):
 - Intro through 2026-08-31: $2/M input, $10/M output, $0.20/M cache read

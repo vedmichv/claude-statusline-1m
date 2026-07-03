@@ -1,5 +1,9 @@
 # Status Line Investigation - 2025-11-09
 
+> **Historical record.** Behavior descriptions below reflect the code as of 2025-11-09.
+> The 💸2x indicator semantics have since changed (v2.2.2+): it now fires only for
+> legacy Sonnet < 4.6 on a 1M window — see CLAUDE.md for current behavior.
+
 **Issue:** Status line не отображается в некоторых директориях
 **Root Cause:** Относительный путь в глобальных настройках
 **Status:** ✅ RESOLVED

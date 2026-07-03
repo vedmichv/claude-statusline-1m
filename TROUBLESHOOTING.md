@@ -1,5 +1,8 @@
 # Claude Code Status Line - Troubleshooting Guide
 
+> **Historical record (2025-11-09).** Example outputs below predate v2.2.4: model names
+> now include a context suffix (`[Sonnet 4.5 [1M]]`) and a token-count segment (`45% 450K/1M`).
+
 **Date:** 2025-11-09
 **Investigation:** Status line not appearing in some directories
 

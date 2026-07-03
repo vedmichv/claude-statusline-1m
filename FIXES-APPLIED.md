@@ -1,5 +1,8 @@
 # Status Line Fixes Applied - 2025-11-09
 
+> **Historical record (2025-11-09).** Example outputs below predate v2.2.4: model names
+> now include a context suffix (`[Sonnet 4.5 [1M]]`) and a token-count segment (`45% 450K/1M`).
+
 ## ✅ Issue Resolved
 
 **Problem:** Status line не отображался в некоторых директориях
@@ -194,7 +197,7 @@ All should work now! ✅
 - ✅ Cost tracking
 - ✅ Duration tracking
 - ✅ Lines changed tracking
-- ✅ Premium pricing indicator (💸2x)
+- ✅ Premium pricing indicator (💸2x — legacy Sonnet 4/4.5 only, see CLAUDE.md)
 
 **Script quality:** Production-ready, well-tested ✅
 
