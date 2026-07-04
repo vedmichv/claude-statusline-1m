@@ -55,8 +55,10 @@ The tool automatically detects the model's context window size from suffixes lik
 - Defaults to 200K tokens if no suffix found
 
 **Context Usage Parsing** (`parse_context_from_transcript()` in scripts/context-monitor.py)
-- Two methods: parses `usage` tokens from assistant messages, or system context warnings
-- Tail-reads the last 256KB of the transcript, then scans the last 15 lines in reverse
+- Two methods: parses `usage` tokens from assistant messages, or a `compact_boundary`
+  system record (type `system`, subtype `compact_boundary`) — the latter renders
+  `✨compacted (was NNNk)` until the next assistant response arrives
+- Tail-reads the last 256KB of the transcript, then scans the last 50 lines in reverse
 - Calculates percentage based on detected context window size
 
 **Premium Pricing Alert** (`has_long_context_surcharge()` in scripts/context-monitor.py)

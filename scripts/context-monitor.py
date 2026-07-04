@@ -191,29 +191,20 @@ def parse_context_from_transcript(transcript_path, context_window=200000):
                                 'method': 'usage'
                             }
                 
-                # Method 2: Parse system context warnings
-                elif data.get('type') == 'system_message':
-                    content = data.get('content', '')
-                    
-                    # "Context left until auto-compact: X%"
-                    match = re.search(r'Context left until auto-compact: (\d+)%', content)
-                    if match:
-                        percent_left = int(match.group(1))
-                        return {
-                            'percent': 100 - percent_left,
-                            'warning': 'auto-compact',
-                            'method': 'system'
-                        }
-                    
-                    # "Context low (X% remaining)"
-                    match = re.search(r'Context low \((\d+)% remaining\)', content)
-                    if match:
-                        percent_left = int(match.group(1))
-                        return {
-                            'percent': 100 - percent_left,
-                            'warning': 'low',
-                            'method': 'system'
-                        }
+                # Method 2: compaction boundary. Reached only when no assistant
+                # usage row follows it (reverse scan) — the context was just
+                # compacted, so older usage rows are stale; show that instead
+                # of a misleading pre-compact percentage.
+                elif data.get('type') == 'system' and data.get('subtype') == 'compact_boundary':
+                    meta = data.get('compactMetadata') or {}
+                    return {
+                        'percent': 0,
+                        'tokens': 0,
+                        'context_window': context_window,
+                        'pre_tokens': meta.get('preTokens', 0),
+                        'warning': 'compacted',
+                        'method': 'system'
+                    }
             
             except (json.JSONDecodeError, KeyError, ValueError):
                 continue
@@ -257,7 +248,10 @@ def format_token_count(tokens):
         millions = tokens / 1000000
         return f"{millions:.0f}M" if millions == int(millions) else f"{millions:.1f}M"
     if tokens >= 1000:
-        return f"{tokens // 1000}K"
+        k = round(tokens / 1000)
+        if k >= 1000:  # 999,500+ rounds to 1000K — promote to M
+            return "1M"
+        return f"{k}K"
     return str(tokens)
 
 def get_context_display(context_info, model_id=""):
@@ -292,11 +286,11 @@ def get_context_display(context_info, model_id=""):
     filled = int((percent / 100) * segments)
     bar = "█" * filled + "▁" * (segments - filled)
 
-    # Special warnings
-    if warning == 'auto-compact':
-        alert = "AUTO-COMPACT!"
-    elif warning == 'low':
-        alert = "LOW!"
+    # Just-compacted marker: fresh window, show what it shrank from
+    if warning == 'compacted':
+        pre = context_info.get('pre_tokens', 0)
+        pre_str = f" (was {format_token_count(pre)})" if pre else ""
+        alert = f"✨compacted{pre_str}"
 
     # Premium pricing warning: only legacy Sonnet (< 4.6) bills >200K at 2x on Bedrock
     premium_pricing = ""

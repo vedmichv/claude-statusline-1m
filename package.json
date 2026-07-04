@@ -1,6 +1,6 @@
 {
   "name": "claude-statusline-1m",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "Claude Code statusline with dynamic 1M context support and premium pricing alerts",
   "main": "cli.js",
   "bin": {
@@ -10,7 +10,8 @@
     "cli.js",
     "statusline.js",
     "install-cli.js",
-    "scripts/"
+    "scripts/context-monitor.py",
+    "LICENSE"
   ],
   "scripts": {
     "test": "echo '{\"model\":{\"id\":\"test[1m]\",\"display_name\":\"Claude\"},\"workspace\":{\"current_dir\":\"/tmp\"},\"transcript_path\":\"\"}' | node statusline.js"

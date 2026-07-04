@@ -34,7 +34,8 @@ python.on('error', (err) => {
   process.exit(1);
 });
 
-python.on('exit', (code) => {
+python.on('close', (code) => {
+  // 'close' (not 'exit') waits until stdout is fully flushed
   process.exit(code || 0);
 });
 
