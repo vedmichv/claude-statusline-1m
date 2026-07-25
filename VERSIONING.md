@@ -1,6 +1,6 @@
 # Versioning Guidelines
 
-## Current Version: 2.2.6
+## Current Version: 2.3.0
 
 ## Version Format: `MAJOR.MINOR.PATCH`
 
@@ -75,6 +75,7 @@ npm publish
 
 ## Current Version History
 
+- **2.3.0** - Daily spend across all sessions (`$1.20 / $65.43 today`) via a detached, lock-guarded `ccusage daily --no-offline` refresh into `~/.claude/statusline-daily-cost.json` (statusline stays ~1ms); new `--refresh-daily` entry point; Opus 5 added to docs and pricing tables (2026-07-25)
 - **2.2.6** - Review follow-ups: dead Method 2 replaced with real `compact_boundary` detection (`✨compacted (was NNNk)` marker), LICENSE file added, `__pycache__` excluded from npm tarball, 'close' event for stdout flush, rounded token counts (2026-07-04)
 - **2.2.5** - 5-agent review fixes: dotted model IDs (proxy-style `sonnet-4.6`) no longer trigger false 💸2x, crash-proof error fallback (ASCII stdout, deleted cwd), exact tail-read boundary detection, 50-line transcript lookback, docs corrections (2026-07-03)
 - **2.2.4** - Sonnet 5 / Fable 5 / Opus 4.8 support: name shortening, verified Bedrock pricing (no >200K surcharge on new models), token count display, tail-read for large transcripts (2026-07-03)

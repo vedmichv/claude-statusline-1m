@@ -9,9 +9,10 @@ This is a Claude Code statusline extension that provides real-time context usage
 - Context usage percentage with visual indicators (progress bar + emoji)
 - Token count display (e.g. `245K/1M`) next to the percentage
 - Session cost tracking
+- Daily spend across all sessions (`$1.20 / $65.43 today`) via a background `ccusage` refresh
 - Duration monitoring
 - Lines changed tracking
-- Premium pricing alerts (💸2x indicator when >200K tokens on legacy pre-4.6 Sonnet models only; Fable 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 have flat Bedrock pricing)
+- Premium pricing alerts (💸2x indicator when >200K tokens on legacy pre-4.6 Sonnet models only; Fable 5, Opus 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 have flat Bedrock pricing)
 
 The tool automatically detects the model's context window size from suffixes like `[1m]` or `[200k]` in the model ID.
 
@@ -61,9 +62,29 @@ The tool automatically detects the model's context window size from suffixes lik
 - Tail-reads the last 256KB of the transcript, then scans the last 50 lines in reverse
 - Calculates percentage based on detected context window size
 
+**Daily Cost Cache** (`read_daily_cost()` / `spawn_daily_refresh()` / `refresh_daily_cache()`)
+- The statusline only ever *reads* `~/.claude/statusline-daily-cost.json` (~1ms). It must never
+  call `ccusage` inline — a cold run is 10–18s and the statusline re-renders constantly.
+- When the cache is missing or older than `DAILY_CACHE_TTL` (60s), the statusline spawns
+  `context-monitor.py --refresh-daily <lockfile>` **detached** (`start_new_session=True`) and
+  renders immediately with whatever value it already had.
+- The child re-invokes this same file rather than embedding a shell one-liner — an earlier
+  version interpolated `repr()` of a path into a single-quoted `sh -c` string and the nested
+  quotes broke the command silently.
+- `O_CREAT|O_EXCL` on the lock file is the mutex: whoever creates it owns the refresh. A lock
+  older than `DAILY_REFRESH_LOCK_TTL` (300s) means the owner died and is reclaimed. The lock
+  lives in `tempfile.gettempdir()`, which on macOS is the per-user `$TMPDIR`, **not** `/tmp` —
+  tests that hardcode `/tmp` will look at the wrong file and appear to fail.
+- Cache writes are atomic (`mkstemp` + `os.replace`) so a concurrent reader never sees a partial file.
+- A cache whose `date` isn't today is discarded, not shown stale — "today" has rolled over.
+- ⚠️ **Always pass `--no-offline` to ccusage.** Its `statusline` subcommand defaults to
+  `--offline` and prices models absent from the bundled table at **$0 with no warning**. On
+  2026-07-25 it reported `$11.46 today` for a ~$65 day because Opus 5 and Opus 4.8 were both
+  missing. `ccusage daily` defaults to online pricing and is correct.
+
 **Premium Pricing Alert** (`has_long_context_surcharge()` in scripts/context-monitor.py)
 - Shows `💸2x` indicator ONLY for legacy Sonnet < 4.6 when tokens > 200K on 1M context
-- Fable 5, Sonnet 5, Opus 4.6/4.7/4.8, Sonnet 4.6: **flat Bedrock pricing** — no long-context surcharge
+- Fable 5, Opus 5, Sonnet 5, Opus 4.6/4.7/4.8, Sonnet 4.6: **flat Bedrock pricing** — no long-context surcharge
 - Legacy Sonnet 4 / 4.5 with 1M context still has 2x surcharge above 200K tokens
 - Version comparison is numeric (`(major, minor) < (4, 6)`), so future Sonnet versions stay flat automatically
 
@@ -102,6 +123,13 @@ node cli.js --install --yes
 
 # Test Python script directly
 echo '{"model":{"id":"test[1m]","display_name":"Claude"},"workspace":{"current_dir":"/tmp"},"transcript_path":""}' | python3 scripts/context-monitor.py
+
+# Run the daily-cost refresh in the foreground (what the detached child does)
+python3 scripts/context-monitor.py --refresh-daily
+
+# Inspect / reset the daily-cost cache
+cat ~/.claude/statusline-daily-cost.json
+rm -f ~/.claude/statusline-daily-cost.json "$(python3 -c 'import tempfile,os;print(os.path.join(tempfile.gettempdir(),"statusline-daily-refresh.lock"))')"
 ```
 
 ## Important Implementation Notes
@@ -168,6 +196,14 @@ Verified July 2026 against aws.amazon.com/bedrock/pricing and platform.claude.co
   NOT available on Bedrock — clients must opt in via SDK middleware; when a fallback runs, the
   Opus 4.8 attempt bills at Opus rates, and a pre-output refusal is not billed at all
 
+**Claude Opus 5** (1M context, flat pricing):
+- $5/M input, $25/M output, $0.50/M cache read — same rates as Opus 4.8
+- **No long-context surcharge** — 1M is both the default and the maximum window
+- Fast mode (`speed: "fast"`) is priced at $10/$50 and is Claude-API-only (not on Bedrock)
+- Elevated cybersecurity safeguards: can return `stop_reason: "refusal"`; cyber-category
+  refusals route to Opus 4.8 as the recommended fallback
+- Separate rate-limit bucket from the combined Opus 4.x pool
+
 **Claude Sonnet 5** (1M context, flat pricing):
 - Intro through 2026-08-31: $2/M input, $10/M output, $0.20/M cache read
 - From 2026-09-01: $3/M input, $15/M output, $0.30/M cache read
@@ -198,5 +234,5 @@ GovCloud Opus 4.8: $6/$30, $0.60 cache read.
 
 The `💸2x` indicator logic lives in `has_long_context_surcharge()` (scripts/context-monitor.py): it fires
 only for Sonnet models with version < 4.6 when `tokens > 200000` on a 1M window — which can only occur
-on a grandfathered 1M-beta session. Fable 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 all have flat pricing —
-the indicator is suppressed for them.
+on a grandfathered 1M-beta session. Fable 5, Opus 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 all have flat
+pricing — the indicator is suppressed for them.

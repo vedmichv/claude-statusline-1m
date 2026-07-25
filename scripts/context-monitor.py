@@ -9,6 +9,17 @@ import sys
 import os
 import re
 import subprocess
+import tempfile
+import time
+
+# Daily-cost cache written by a detached `ccusage daily` refresh (see
+# read_daily_cost / spawn_daily_refresh). Kept out of ~/.claude/ proper so a
+# stale/corrupt cache can never confuse Claude Code's own config loading.
+DAILY_CACHE_PATH = os.path.join(
+    os.path.expanduser("~"), ".claude", "statusline-daily-cost.json"
+)
+DAILY_CACHE_TTL = 60      # seconds before the value is considered stale
+DAILY_REFRESH_LOCK_TTL = 300  # a refresh that hasn't finished in 5min is dead
 
 def shorten_model_name(model_name, model_id):
     """Shorten model name to be more compact.
@@ -326,15 +337,171 @@ def get_directory_display(workspace_data):
     else:
         return "unknown"
 
+def read_daily_cost():
+    """Read the cached all-sessions daily total written by the background refresh.
+
+    Returns (cost_usd, is_stale) or (None, False) when no usable cache exists.
+    Never spawns anything and never blocks — the statusline runs on every render.
+    """
+    try:
+        with open(DAILY_CACHE_PATH) as f:
+            cache = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None, False
+
+    # A cache from a previous day is useless, not merely stale: "today" rolled over.
+    if cache.get('date') != time.strftime('%Y-%m-%d'):
+        return None, False
+
+    cost = cache.get('cost_usd')
+    if not isinstance(cost, (int, float)):
+        return None, False
+
+    age = time.time() - cache.get('updated_at', 0)
+    return float(cost), age > DAILY_CACHE_TTL
+
+
+def spawn_daily_refresh():
+    """Fire off a detached `ccusage daily` and write its total to the cache.
+
+    ccusage takes 10-18s cold, so it can never run inline. A lock file keeps
+    concurrent statusline invocations (one per render, several panes) from
+    stampeding a dozen node processes.
+
+    --no-offline is REQUIRED: ccusage's bundled offline pricing table silently
+    prices models it doesn't know at $0. On 2026-07-25 that under-reported a
+    $65 day as $11.46 because Opus 5 and Opus 4.8 were both missing from it.
+    """
+    lock_path = os.path.join(tempfile.gettempdir(), 'statusline-daily-refresh.lock')
+
+    # O_EXCL is the lock: whoever creates the file owns the refresh.
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        os.close(fd)
+    except FileExistsError:
+        try:
+            if time.time() - os.path.getmtime(lock_path) < DAILY_REFRESH_LOCK_TTL:
+                return  # a refresh is genuinely in flight
+            os.unlink(lock_path)  # previous refresh died; reclaim and retry next render
+        except OSError:
+            pass
+        return
+    except OSError:
+        return
+
+    # The child runs `this same file --refresh-daily`, so there is no nested
+    # shell quoting to get wrong and no second copy of the parsing logic.
+    try:
+        subprocess.Popen(
+            [sys.executable or 'python3', os.path.abspath(__file__),
+             '--refresh-daily', lock_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,  # survives the statusline process exiting
+        )
+    except Exception:
+        try:
+            os.unlink(lock_path)  # never leave a lock behind for a process that never ran
+        except OSError:
+            pass
+
+
+def refresh_daily_cache(lock_path=None):
+    """Run ccusage and write the daily total to the cache. Runs detached.
+
+    Entry point for `context-monitor.py --refresh-daily`; never called inline.
+    """
+    try:
+        today = time.strftime('%Y%m%d')
+        try:
+            proc = subprocess.run(
+                ['ccusage', 'daily', '--json', '--no-offline',
+                 '--since', today, '--until', today],
+                capture_output=True, text=True, timeout=120,
+            )
+        except FileNotFoundError:
+            return  # ccusage not installed — the daily figure just stays hidden
+        except subprocess.TimeoutExpired:
+            return
+
+        if proc.returncode != 0:
+            return
+
+        rows = (json.loads(proc.stdout) or {}).get('daily') or []
+        if not rows:
+            return
+        total = sum(r.get('totalCost', 0) for r in rows)
+
+        payload = {
+            'date': time.strftime('%Y-%m-%d'),
+            'cost_usd': total,
+            'updated_at': time.time(),
+        }
+        # Atomic replace: a statusline reading mid-write must never see half a file.
+        os.makedirs(os.path.dirname(DAILY_CACHE_PATH), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(DAILY_CACHE_PATH))
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(payload, f)
+            os.replace(tmp, DAILY_CACHE_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    except Exception:
+        pass  # a failed refresh must stay silent; the statusline just shows no daily
+    finally:
+        if lock_path:
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+
+
+def format_cost(cost_usd):
+    """Compact cost: 0.004 -> '0¢', 1.2 -> '$1.20', 65.434 -> '$65.43'."""
+    if cost_usd < 0.01:
+        return f"{cost_usd*100:.0f}¢"
+    return f"${cost_usd:.2f}"
+
+
+def get_daily_cost_display():
+    """Render the all-sessions daily total, refreshing the cache in the background."""
+    cost, is_stale = read_daily_cost()
+
+    # Refresh whenever the value is missing or past its TTL. Cheap: lock-guarded.
+    if cost is None or is_stale:
+        spawn_daily_refresh()
+
+    if cost is None:
+        return ""  # first run — nothing to show until the refresh lands
+
+    # Thresholds mirror the session-cost colouring, scaled to a whole day.
+    if cost >= 50:
+        color = "\033[31m"   # Red
+    elif cost >= 20:
+        color = "\033[33m"   # Yellow
+    else:
+        color = "\033[32m"   # Green
+
+    # '~' marks a value served past its TTL while the refresh is still running.
+    suffix = "~" if is_stale else ""
+    return f"{color}{format_cost(cost)}{suffix} today\033[0m"
+
+
 def get_session_metrics(cost_data):
     """Get session metrics display."""
     if not cost_data:
-        return ""
-    
+        cost_data = {}
+
     metrics = []
-    
-    # Cost
+
+    # Cost: session (from Claude Code) + all-sessions daily total (from ccusage)
     cost_usd = cost_data.get('total_cost_usd', 0)
+    daily_display = get_daily_cost_display()
+
     if cost_usd > 0:
         if cost_usd >= 0.10:
             cost_color = "\033[31m"  # Red for expensive
@@ -342,10 +509,17 @@ def get_session_metrics(cost_data):
             cost_color = "\033[33m"  # Yellow for moderate
         else:
             cost_color = "\033[32m"  # Green for cheap
-        
-        cost_str = f"{cost_usd*100:.0f}¢" if cost_usd < 0.01 else f"${cost_usd:.3f}"
-        metrics.append(f"{cost_color}💰 {cost_str}\033[0m")
-    
+
+        cost_str = format_cost(cost_usd)
+        session_part = f"{cost_color}{cost_str}\033[0m"
+        if daily_display:
+            metrics.append(f"💰 {session_part} \033[90m/\033[0m {daily_display}")
+        else:
+            metrics.append(f"💰 {session_part}")
+    elif daily_display:
+        # No session cost yet (fresh session) — the daily total is still useful
+        metrics.append(f"💰 {daily_display}")
+
     # Duration
     duration_ms = cost_data.get('total_duration_ms', 0)
     if duration_ms > 0:
@@ -381,6 +555,14 @@ def get_session_metrics(cost_data):
     return f" \033[90m|\033[0m {' '.join(metrics)}" if metrics else ""
 
 def main():
+    # Background refresh mode: no stdin, no statusline output. Handled before
+    # anything else so a detached child never tries to read Claude Code's JSON.
+    if '--refresh-daily' in sys.argv:
+        idx = sys.argv.index('--refresh-daily')
+        lock = sys.argv[idx + 1] if len(sys.argv) > idx + 1 else None
+        refresh_daily_cache(lock)
+        return
+
     # Emoji output crashes on non-UTF-8 stdout (POSIX-locale Linux/CI) —
     # and the emoji-bearing fallback would too, defeating the error handler
     try:
