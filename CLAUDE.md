@@ -10,6 +10,7 @@ This is a Claude Code statusline extension that provides real-time context usage
 - Token count display (e.g. `245K/1M`) next to the percentage
 - Session cost tracking
 - Daily spend across all sessions (`$1.20 / $65.43 today`) via a background `ccusage` refresh
+- Billing-account badge (`AWS` / `SUB` / `API`) and a per-account split of the daily total
 - Duration monitoring
 - Lines changed tracking
 - Premium pricing alerts (💸2x indicator when >200K tokens on legacy pre-4.6 Sonnet models only; Fable 5, Opus 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 have flat Bedrock pricing)
@@ -81,6 +82,39 @@ The tool automatically detects the model's context window size from suffixes lik
   `--offline` and prices models absent from the bundled table at **$0 with no warning**. On
   2026-07-25 it reported `$11.46 today` for a ~$65 day because Opus 5 and Opus 4.8 were both
   missing. `ccusage daily` defaults to online pricing and is correct.
+
+**Billing Provider Attribution** (`detect_provider()` / `record_session_provider()` / `scan_weighted_tokens_by_provider()`)
+- **Transcripts carry NO provider information.** `message.model` is normalised to a bare id
+  (`claude-opus-5`) before being written, so the `us.anthropic.` / `anthropic.` prefix that
+  would reveal the routing is already gone. Verified across all 102k+ historical records:
+  zero prefixed ids. The environment is the only source of truth.
+- `detect_provider()` reads it from the env Claude Code was started with. Claude Code reads
+  provider env once at startup, so the value is stable for the session's lifetime.
+- **`aws` covers Bedrock AND Mantle deliberately.** Mantle is an endpoint *within* the AWS
+  path — `CLAUDE_CODE_USE_BEDROCK=1` + `CLAUDE_CODE_USE_MANTLE=1` set together is the
+  documented Mantle setup, not a misconfiguration — and both land on the same AWS bill.
+  Do not "fix" this into two buckets.
+- The statusline records `<session-uuid> → provider` in `statusline-session-providers.json`.
+  Written only when the value would change, so repeat renders don't churn the disk. The map
+  is capped at 2000 entries. No `SessionStart` hook is needed: the statusline already gets
+  the transcript path and inherits the session's startup env.
+- Subagent transcripts (`<session>/subagents/*.jsonl`) bill to the parent, so the scan walks
+  up the path looking for an enclosing session dir in the provider map.
+- **The split does not price anything.** ccusage owns the absolute costs; the scan only
+  computes each provider's *share* of a model's tokens (weighted by `TOKEN_WEIGHTS`, whose
+  ratios — output 5x, cache write 1.25x, cache read 0.1x — are uniform across the lineup).
+  Buckets therefore always sum to exactly `ccusage daily`'s total, and there is no second
+  price table to go stale. Unattributable remainder surfaces as the `?` bucket rather than
+  silently vanishing.
+- ⚠️ `ccusage session --id` does **not** accept a session UUID (returns 0 rows) — it wants
+  the project-path form. That is why attribution is done by local scan, not by ccusage.
+
+**Daily Threshold Colours** (`daily_cost_color()`)
+- Green < `DAILY_YELLOW` (175), yellow < `DAILY_RED` (350), red at or above. Overridable via
+  `STATUSLINE_DAILY_YELLOW` / `STATUSLINE_DAILY_RED`.
+- `_env_float()` guards the parse: these are module-level constants, so an unparseable env
+  value would raise at *import* time — before `main()`'s error handler exists — and take the
+  whole statusline down rather than degrading to the fallback line.
 
 **Premium Pricing Alert** (`has_long_context_surcharge()` in scripts/context-monitor.py)
 - Shows `💸2x` indicator ONLY for legacy Sonnet < 4.6 when tokens > 200K on 1M context

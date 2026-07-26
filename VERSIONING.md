@@ -1,6 +1,6 @@
 # Versioning Guidelines
 
-## Current Version: 2.3.0
+## Current Version: 2.4.0
 
 ## Version Format: `MAJOR.MINOR.PATCH`
 
@@ -75,6 +75,7 @@ npm publish
 
 ## Current Version History
 
+- **2.4.0** - Billing-account attribution: `AWS`/`SUB`/`API` badge next to the model plus a per-account split of the daily total, shown only when more than one account was used that day. Provider comes from the session env (transcripts record none); ccusage keeps owning the absolute costs while the local scan supplies only the proportions, so buckets always reconcile. Daily thresholds raised to $175/$350 and made overridable via STATUSLINE_DAILY_YELLOW/RED (2026-07-26)
 - **2.3.0** - Daily spend across all sessions (`$1.20 / $65.43 today`) via a detached, lock-guarded `ccusage daily --no-offline` refresh into `~/.claude/statusline-daily-cost.json` (statusline stays ~1ms); new `--refresh-daily` entry point; Opus 5 added to docs and pricing tables (2026-07-25)
 - **2.2.6** - Review follow-ups: dead Method 2 replaced with real `compact_boundary` detection (`✨compacted (was NNNk)` marker), LICENSE file added, `__pycache__` excluded from npm tarball, 'close' event for stdout flush, rounded token counts (2026-07-04)
 - **2.2.5** - 5-agent review fixes: dotted model IDs (proxy-style `sonnet-4.6`) no longer trigger false 💸2x, crash-proof error fallback (ASCII stdout, deleted cwd), exact tail-read boundary detection, 50-line transcript lookback, docs corrections (2026-07-03)

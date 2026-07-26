@@ -18,8 +18,35 @@ import time
 DAILY_CACHE_PATH = os.path.join(
     os.path.expanduser("~"), ".claude", "statusline-daily-cost.json"
 )
+# session-uuid -> provider, appended to by every statusline render (see
+# record_session_provider). The aggregator uses it to bucket each transcript.
+PROVIDER_MAP_PATH = os.path.join(
+    os.path.expanduser("~"), ".claude", "statusline-session-providers.json"
+)
 DAILY_CACHE_TTL = 60      # seconds before the value is considered stale
 DAILY_REFRESH_LOCK_TTL = 300  # a refresh that hasn't finished in 5min is dead
+
+def _env_float(name, default):
+    """Read a numeric env override, falling back on anything unparseable.
+
+    Guarded because this runs at import time: an unparseable value must not
+    raise there, or it takes down the statusline before main()'s error handler
+    is even reachable.
+    """
+    try:
+        return float(os.environ[name])
+    except (KeyError, TypeError, ValueError):
+        return float(default)
+
+
+# Daily-spend colour thresholds in USD. Override with STATUSLINE_DAILY_RED /
+# STATUSLINE_DAILY_YELLOW to suit your own budget.
+DAILY_RED = _env_float('STATUSLINE_DAILY_RED', 350)
+DAILY_YELLOW = _env_float('STATUSLINE_DAILY_YELLOW', 175)
+
+# Short labels for the two billing buckets. Mantle and Bedrock are both AWS
+# spend on the same account, so they deliberately share one bucket.
+PROVIDER_LABELS = {'aws': 'AWS', 'sub': 'SUB', 'api': 'API', 'unknown': '?'}
 
 def shorten_model_name(model_name, model_id):
     """Shorten model name to be more compact.
@@ -337,11 +364,87 @@ def get_directory_display(workspace_data):
     else:
         return "unknown"
 
-def read_daily_cost():
-    """Read the cached all-sessions daily total written by the background refresh.
+def detect_provider():
+    """Which account this session bills to, from the env Claude Code was started with.
 
-    Returns (cost_usd, is_stale) or (None, False) when no usable cache exists.
-    Never spawns anything and never blocks — the statusline runs on every render.
+    The transcript itself carries NO provider information — `message.model` is
+    normalised to a bare id (`claude-opus-5`), so the `us.anthropic.` /
+    `anthropic.` prefix that would reveal the routing is gone by the time
+    anything is written to disk. The environment is the only source of truth,
+    and Claude Code reads it once at startup, so it is stable for the session.
+
+    'aws' covers both Bedrock and Mantle: Mantle is an endpoint *within* the
+    AWS path (both toggles set together is the documented Mantle setup), and
+    both land on the same AWS bill — so splitting them would be a distinction
+    without a difference for cost tracking.
+    """
+    if os.environ.get('CLAUDE_CODE_USE_BEDROCK') or os.environ.get('CLAUDE_CODE_USE_MANTLE'):
+        return 'aws'
+    if os.environ.get('CLAUDE_CODE_USE_VERTEX'):
+        return 'aws'  # another cloud bill rather than subscription usage
+    if os.environ.get('ANTHROPIC_BASE_URL') or os.environ.get('ANTHROPIC_API_KEY'):
+        return 'api'
+    return 'sub'
+
+
+def session_id_from_transcript(transcript_path):
+    """Transcript filenames are '<session-uuid>.jsonl' — that uuid is the key."""
+    if not transcript_path:
+        return None
+    name = os.path.basename(transcript_path)
+    return name[:-6] if name.endswith('.jsonl') else None
+
+
+def record_session_provider(transcript_path, provider):
+    """Note this session's provider so the aggregator can bucket its spend.
+
+    Writes only when the value would change, so the steady state is a single
+    read — the statusline runs on every render and must not churn the disk.
+    """
+    session_id = session_id_from_transcript(transcript_path)
+    if not session_id:
+        return
+
+    try:
+        with open(PROVIDER_MAP_PATH) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+
+    if data.get(session_id) == provider:
+        return  # already recorded — the common case
+
+    data[session_id] = provider
+
+    # Bound the file: sessions are never revisited once their day is over, and
+    # an unbounded map would grow forever across thousands of sessions.
+    if len(data) > 2000:
+        data = dict(list(data.items())[-2000:])
+
+    try:
+        os.makedirs(os.path.dirname(PROVIDER_MAP_PATH), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(PROVIDER_MAP_PATH))
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(data, f)
+            os.replace(tmp, PROVIDER_MAP_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    except OSError:
+        pass  # a statusline must never fail because it couldn't write a hint file
+
+
+def read_daily_cost():
+    """Read the cached daily spend written by the background refresh.
+
+    Returns (buckets, is_stale) where buckets maps provider -> cost_usd, or
+    (None, False) when no usable cache exists. Never spawns anything and never
+    blocks — the statusline runs on every render.
     """
     try:
         with open(DAILY_CACHE_PATH) as f:
@@ -353,12 +456,22 @@ def read_daily_cost():
     if cache.get('date') != time.strftime('%Y-%m-%d'):
         return None, False
 
-    cost = cache.get('cost_usd')
-    if not isinstance(cost, (int, float)):
-        return None, False
-
     age = time.time() - cache.get('updated_at', 0)
-    return float(cost), age > DAILY_CACHE_TTL
+    is_stale = age > DAILY_CACHE_TTL
+
+    buckets = cache.get('buckets')
+    if isinstance(buckets, dict):
+        clean = {k: float(v) for k, v in buckets.items()
+                 if isinstance(v, (int, float)) and v > 0}
+        return (clean or None), is_stale
+
+    # A v2.3.0 cache had a single 'cost_usd' with no split. Present it as one
+    # unattributed bucket so an upgrade doesn't blank the display for a minute.
+    cost = cache.get('cost_usd')
+    if isinstance(cost, (int, float)):
+        return {'all': float(cost)}, is_stale
+
+    return None, False
 
 
 def spawn_daily_refresh():
@@ -407,16 +520,131 @@ def spawn_daily_refresh():
             pass
 
 
+# Relative token prices, as multiples of the input-token price. These ratios are
+# uniform across the whole Claude lineup (output 5x, cache write 1.25x, cache
+# read 0.1x), which is what makes the provider split below price-table-free:
+# only the ratios matter, and they don't change when a new model ships.
+TOKEN_WEIGHTS = (
+    ('input_tokens', 1.0),
+    ('output_tokens', 5.0),
+    ('cache_creation_input_tokens', 1.25),
+    ('cache_read_input_tokens', 0.1),
+)
+
+
+def _weighted_tokens(usage):
+    """Cost of one usage row in 'input-token equivalents' (see TOKEN_WEIGHTS)."""
+    return sum(usage.get(field, 0) * mult for field, mult in TOKEN_WEIGHTS)
+
+
+def scan_weighted_tokens_by_provider(providers):
+    """Weighted today-tokens per (model, provider), read straight from transcripts.
+
+    Returns {model: {provider: weighted_tokens}}. Deliberately computes no money:
+    ccusage owns the absolute figures, this only establishes the proportions to
+    divide them by — so there is no price table here to fall out of date.
+    """
+    import glob
+
+    today = time.strftime('%Y-%m-%d')
+    pattern = os.path.join(os.path.expanduser('~'), '.claude', 'projects',
+                           '**', '*.jsonl')
+    cutoff = time.time() - 36 * 3600  # a today-row can't live in an older file
+
+    result = {}
+    seen = set()
+    for path in glob.iglob(pattern, recursive=True):
+        try:
+            if os.path.getmtime(path) < cutoff:
+                continue
+            fh = open(path, 'rb')
+        except OSError:
+            continue
+
+        # Subagent transcripts live under <session>/subagents/ and bill to the
+        # parent session, so inherit the provider from the enclosing session dir.
+        provider = providers.get(session_id_from_transcript(path) or '')
+        if provider is None:
+            parts = path.split(os.sep)
+            for part in reversed(parts[:-1]):
+                if part in providers:
+                    provider = providers[part]
+                    break
+        provider = provider or 'unknown'
+
+        with fh:
+            for raw in fh:
+                if b'"usage"' not in raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if entry.get('type') != 'assistant':
+                    continue
+                stamp = entry.get('timestamp')
+                if not stamp:
+                    continue
+                try:
+                    local = _parse_iso_local(stamp)
+                except Exception:
+                    continue
+                if local != today:
+                    continue
+
+                message = entry.get('message') or {}
+                # Claude Code writes several rows per API response; the
+                # (id, requestId) pair identifies the response, not the row.
+                key = (message.get('id'), entry.get('requestId'))
+                if key[0]:
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                model = message.get('model') or ''
+                if not model or model == '<synthetic>':
+                    continue
+                weighted = _weighted_tokens(message.get('usage') or {})
+                if weighted <= 0:
+                    continue
+                result.setdefault(model, {}).setdefault(provider, 0.0)
+                result[model][provider] += weighted
+
+    return result
+
+
+def _parse_iso_local(stamp):
+    """ISO-8601 UTC stamp -> local 'YYYY-MM-DD'."""
+    from datetime import datetime
+    return datetime.fromisoformat(
+        stamp.replace('Z', '+00:00')
+    ).astimezone().strftime('%Y-%m-%d')
+
+
+def read_provider_map():
+    try:
+        with open(PROVIDER_MAP_PATH) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def refresh_daily_cache(lock_path=None):
-    """Run ccusage and write the daily total to the cache. Runs detached.
+    """Run ccusage, split its total by provider, and write the cache. Runs detached.
 
     Entry point for `context-monitor.py --refresh-daily`; never called inline.
+
+    ccusage stays the single authority on how much money was spent — the
+    per-provider split is applied on top by weighting each model's cost by the
+    tokens each provider contributed, so the buckets always add up to exactly
+    what `ccusage daily` reports.
     """
     try:
         today = time.strftime('%Y%m%d')
         try:
             proc = subprocess.run(
-                ['ccusage', 'daily', '--json', '--no-offline',
+                ['ccusage', 'daily', '--json', '--no-offline', '--breakdown',
                  '--since', today, '--until', today],
                 capture_output=True, text=True, timeout=120,
             )
@@ -431,11 +659,41 @@ def refresh_daily_cache(lock_path=None):
         rows = (json.loads(proc.stdout) or {}).get('daily') or []
         if not rows:
             return
+
+        # Authoritative cost per model, from ccusage.
+        model_costs = {}
+        for row in rows:
+            for item in row.get('modelBreakdowns') or []:
+                name = item.get('modelName')
+                if name:
+                    model_costs[name] = model_costs.get(name, 0.0) + item.get('cost', 0)
         total = sum(r.get('totalCost', 0) for r in rows)
+
+        # Divide each model's cost among providers by their token share.
+        shares = scan_weighted_tokens_by_provider(read_provider_map())
+        buckets = {}
+        attributed = 0.0
+        for model, cost in model_costs.items():
+            by_provider = shares.get(model)
+            if not by_provider:
+                continue  # no local evidence for this model; handled below
+            weighted_total = sum(by_provider.values())
+            if weighted_total <= 0:
+                continue
+            for provider, weighted in by_provider.items():
+                buckets[provider] = buckets.get(provider, 0.0) + cost * weighted / weighted_total
+            attributed += cost
+
+        # Anything ccusage counted that the local scan couldn't place (another
+        # machine's transcripts, a pruned file) stays visible rather than vanishing.
+        remainder = total - attributed
+        if remainder > 0.005:
+            buckets['unknown'] = buckets.get('unknown', 0.0) + remainder
 
         payload = {
             'date': time.strftime('%Y-%m-%d'),
             'cost_usd': total,
+            'buckets': buckets or {'unknown': total},
             'updated_at': time.time(),
         }
         # Atomic replace: a statusline reading mid-write must never see half a file.
@@ -467,28 +725,54 @@ def format_cost(cost_usd):
     return f"${cost_usd:.2f}"
 
 
+def daily_cost_color(cost):
+    """Colour for a daily amount. Thresholds are budget-scaled, not session-scaled."""
+    if cost >= DAILY_RED:
+        return "\033[31m"    # Red
+    if cost >= DAILY_YELLOW:
+        return "\033[33m"    # Yellow
+    return "\033[32m"        # Green
+
+
 def get_daily_cost_display():
-    """Render the all-sessions daily total, refreshing the cache in the background."""
-    cost, is_stale = read_daily_cost()
+    """Render today's spend, split by billing account, refreshing in the background.
+
+    Only buckets that actually spent money are shown: a day with no subscription
+    usage shows no SUB figure, and a single-provider day shows one bare total with
+    no label at all — the split is only worth the width when there is a split.
+    """
+    buckets, is_stale = read_daily_cost()
 
     # Refresh whenever the value is missing or past its TTL. Cheap: lock-guarded.
-    if cost is None or is_stale:
+    if buckets is None or is_stale:
         spawn_daily_refresh()
 
-    if cost is None:
+    if not buckets:
         return ""  # first run — nothing to show until the refresh lands
 
-    # Thresholds mirror the session-cost colouring, scaled to a whole day.
-    if cost >= 50:
-        color = "\033[31m"   # Red
-    elif cost >= 20:
-        color = "\033[33m"   # Yellow
-    else:
-        color = "\033[32m"   # Green
-
+    total = sum(buckets.values())
     # '~' marks a value served past its TTL while the refresh is still running.
     suffix = "~" if is_stale else ""
-    return f"{color}{format_cost(cost)}{suffix} today\033[0m"
+    total_str = f"{daily_cost_color(total)}{format_cost(total)}{suffix} today\033[0m"
+
+    # Drop rounding dust so a stray fraction of a cent can't invent a bucket, and
+    # ignore slivers below 1% — a rounding artefact of the split isn't a provider
+    # worth spending statusline width on.
+    floor = max(0.01, total * 0.01)
+    shown = {k: v for k, v in buckets.items() if v >= floor}
+
+    # One bucket (or none survived): the label adds nothing over the bare total.
+    if len(shown) <= 1:
+        return total_str
+
+    # Total first, then the split in parentheses — the number you actually watch
+    # stays in the same place regardless of how many providers are in play.
+    parts = []
+    for provider, cost in sorted(shown.items(), key=lambda kv: -kv[1]):
+        label = PROVIDER_LABELS.get(provider, provider.upper())
+        parts.append(f"{format_cost(cost)} {label}")
+
+    return f"{total_str} \033[90m({' + '.join(parts)})\033[0m"
 
 
 def get_session_metrics(cost_data):
@@ -585,6 +869,12 @@ def main():
         # Shorten model name for compact display
         model_name_short = shorten_model_name(model_name, model_id)
 
+        # Which account this session bills to, and note it for the aggregator.
+        # Recorded here (not in a hook) because the statusline already receives
+        # the transcript path and inherits the session's startup environment.
+        provider = detect_provider()
+        record_session_provider(transcript_path, provider)
+
         # Detect context window size from model ID
         context_window = get_context_window_size(model_id)
 
@@ -597,6 +887,11 @@ def main():
         session_metrics = get_session_metrics(cost_data)
         keyboard_layout = get_keyboard_layout()
         
+        # Provider badge next to the model: which account this session bills to.
+        # Catches the failure mode where a settings.json model pin silently routes
+        # a session to the wrong account — invisible until the invoice arrives.
+        provider_badge = f" \033[35m{PROVIDER_LABELS.get(provider, provider.upper())}\033[0m"
+
         # Model display with context-aware coloring
         if context_info:
             percent = context_info.get('percent', 0)
@@ -607,9 +902,9 @@ def main():
             else:
                 model_color = "\033[32m"  # Green
 
-            model_display = f"{model_color}[{model_name_short}]\033[0m"
+            model_display = f"{model_color}[{model_name_short}{provider_badge}]\033[0m"
         else:
-            model_display = f"\033[94m[{model_name_short}]\033[0m"
+            model_display = f"\033[94m[{model_name_short}{provider_badge}]\033[0m"
 
         # Combine all components with keyboard layout indicator (only if non-English)
         layout_indicator = f" {keyboard_layout}" if keyboard_layout else ""
