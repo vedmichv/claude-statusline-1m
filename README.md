@@ -4,7 +4,7 @@ Dynamic context window detection for Claude Code statusline that automatically a
 
 ## Features
 
-- 🎯 **Dynamic Context Detection**: Automatically detects `[1m]`, `[200k]`, etc. suffixes
+- 🎯 **Dynamic Context Detection**: Uses Claude Code's own `context_window` data (window size + last usage), so the bar matches `/context`; `[1m]` / `[200k]` model-ID suffixes are the fallback for old Claude Code versions
 - 📊 **Accurate Percentages**: Shows correct context usage for 1M and 200K models
 - 🔢 **Token Count**: Shows absolute usage next to the percentage (e.g. `25% 250K/1M`)
 - 💰 **Session Metrics**: Cost tracking and duration monitoring
@@ -88,11 +88,17 @@ Expected output: `[Claude] 📁 tmp 🧠 🔵 ???`
 
 ## Context Window Detection
 
-The script automatically detects your model's context window from the model ID:
+The window size and usage come from the `context_window` object Claude Code passes on stdin
+(`context_window_size`, `current_usage`, `used_percentage`). Current Claude Code sends the model ID
+without the `[1m]` suffix (`anthropic.claude-opus-5-5` on a 1M session), so the ID is only a
+fallback for versions that predate `context_window`:
 
 - `model[1m]` → 1,000,000 tokens
 - `model[200k]` → 200,000 tokens
 - No suffix → 200,000 tokens (default)
+
+Usage is read from the transcript only when `current_usage` is `null`: the first render of a
+session and right after `/compact` (shown as `✨compacted (was NNNK)`).
 
 ## Supported Models
 

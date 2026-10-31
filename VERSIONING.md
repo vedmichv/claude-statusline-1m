@@ -1,6 +1,6 @@
 # Versioning Guidelines
 
-## Current Version: 2.4.0
+## Current Version: 2.4.1
 
 ## Version Format: `MAJOR.MINOR.PATCH`
 
@@ -75,6 +75,7 @@ npm publish
 
 ## Current Version History
 
+- **2.4.1** - Context bar reads Claude Code's own `context_window` stdin data (`context_window_size`, `current_usage`, `used_percentage`). Claude Code 2.1.316 dropped `[1m]` from `model.id`, so every 1M session was measured against 200K: 5x the real percentage, `100% CRIT` past 200K tokens. Model-ID suffix and transcript tail stay as fallbacks (old versions, first render, right after `/compact`). Also lands the 2026-10-25 ccusage load fix from the installed copy: 30-min cache and lock TTL, failed refresh keeps the lock, `ccusage claude daily` (2026-10-31)
 - **2.4.0** - Billing-account attribution: `AWS`/`SUB`/`API` badge next to the model plus a per-account split of the daily total, shown only when more than one account was used that day. Provider comes from the session env (transcripts record none); ccusage keeps owning the absolute costs while the local scan supplies only the proportions, so buckets always reconcile. Daily thresholds raised to $175/$350 and made overridable via STATUSLINE_DAILY_YELLOW/RED (2026-07-26)
 - **2.3.0** - Daily spend across all sessions (`$1.20 / $65.43 today`) via a detached, lock-guarded `ccusage daily --no-offline` refresh into `~/.claude/statusline-daily-cost.json` (statusline stays ~1ms); new `--refresh-daily` entry point; Opus 5 added to docs and pricing tables (2026-07-25)
 - **2.2.6** - Review follow-ups: dead Method 2 replaced with real `compact_boundary` detection (`✨compacted (was NNNk)` marker), LICENSE file added, `__pycache__` excluded from npm tarball, 'close' event for stdout flush, rounded token counts (2026-07-04)

@@ -23,8 +23,12 @@ DAILY_CACHE_PATH = os.path.join(
 PROVIDER_MAP_PATH = os.path.join(
     os.path.expanduser("~"), ".claude", "statusline-session-providers.json"
 )
-DAILY_CACHE_TTL = 60      # seconds before the value is considered stale
-DAILY_REFRESH_LOCK_TTL = 300  # a refresh that hasn't finished in 5min is dead
+# Every ccusage run re-reads all transcripts under ~/.claude/projects (tens of
+# GB; ccusage 18 held a core for ~110 s, 20 takes ~7 s): refresh every 30 min.
+DAILY_CACHE_TTL = 1800    # seconds before the value is considered stale
+# A refresh that hasn't finished by then is dead. A failed refresh keeps the
+# lock, so the retry waits this long too instead of firing on the next render.
+DAILY_REFRESH_LOCK_TTL = 1800
 
 def _env_float(name, default):
     """Read a numeric env override, falling back on anything unparseable.
@@ -48,13 +52,18 @@ DAILY_YELLOW = _env_float('STATUSLINE_DAILY_YELLOW', 175)
 # spend on the same account, so they deliberately share one bucket.
 PROVIDER_LABELS = {'aws': 'AWS', 'sub': 'SUB', 'api': 'API', 'unknown': '?'}
 
-def shorten_model_name(model_name, model_id):
+def shorten_model_name(model_name, model_id, context_window=None):
     """Shorten model name to be more compact.
 
     Examples:
         'Claude Sonnet 4.5' + 'xxx[1m]' -> 'Sonnet 4.5 [1M]'
         'Claude Opus 3.5' + 'xxx[200k]' -> 'Opus 3.5 [200K]'
         'global.anthropic.claude-sonnet-4-5-xxx[1m]' -> 'Sonnet 4.5 [1M]'
+        'Opus 5.5' + 'anthropic.claude-opus-5-5' + 1000000 -> 'Opus 5.5 [1M]'
+
+    context_window is Claude Code's own context_window.context_window_size,
+    used for the suffix when the id carries none (current Claude Code strips
+    '[1m]' from model.id). None means "unknown": no suffix is guessed.
     """
     # Extract model type (Fable/Mythos first: 'fable' could coexist with legacy names)
     model_type = None
@@ -91,6 +100,8 @@ def shorten_model_name(model_name, model_id):
         num = context_match.group(1)
         unit = context_match.group(2).upper()
         context_suffix = f" [{num}{unit}]"
+    elif _positive_int(context_window):
+        context_suffix = f" [{format_token_count(context_window)}]"
 
     # Build shortened name
     result = f"{model_type}"
@@ -144,15 +155,30 @@ def get_keyboard_layout():
     # Default to empty (English is most common)
     return ""
 
-def get_context_window_size(model_id):
-    """Extract context window size from model ID.
+def _positive_int(value):
+    """True for a real positive number from JSON (bool is an int subclass: excluded)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
 
-    Looks for [XM] or [Xk] suffix in model ID to determine context window.
-    Examples:
+
+def get_context_window_size(model_id, context_window_data=None):
+    """Context window size in tokens.
+
+    1. context_window.context_window_size from the statusline stdin: Claude
+       Code's own figure, the same one /context divides by. Authoritative.
+       Claude Code 2.1.316 sends model.id WITHOUT the '[1m]' suffix
+       ('anthropic.claude-opus-5-5' for a 1M session), so the id alone would
+       put a 1M session on a 200K window and show 5x the real percentage.
+    2. A [XM] / [Xk] suffix in the model id (older Claude Code versions that
+       predate the context_window object):
         - model[1m] = 1,000,000 tokens
         - model[200k] = 200,000 tokens
-        - Default = 200,000 tokens
+    3. Default = 200,000 tokens
     """
+    if isinstance(context_window_data, dict):
+        size = context_window_data.get('context_window_size')
+        if _positive_int(size):
+            return int(size)
+
     if not model_id:
         return 200000
 
@@ -169,8 +195,50 @@ def get_context_window_size(model_id):
     # Default to 200k for older models
     return 200000
 
+def context_from_stdin(context_window_data, context_window):
+    """Context usage exactly as Claude Code reports it on the statusline stdin.
+
+    tokens = input + cache_creation + cache_read of the last API response
+    (output excluded), which is Claude Code's documented formula for
+    used_percentage; used_percentage itself is preferred so the bar matches
+    what Claude Code shows. Costs no file I/O, unlike the transcript scan.
+
+    Returns None when Claude Code has no current figure: before the first API
+    response and right after /compact (current_usage is null in both cases).
+    The caller then falls back to the transcript, which also recognises the
+    compact boundary.
+    """
+    if not isinstance(context_window_data, dict):
+        return None
+    usage = context_window_data.get('current_usage')
+    if not isinstance(usage, dict):
+        return None
+
+    tokens = 0
+    for field in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
+        value = usage.get(field)
+        if _positive_int(value):
+            tokens += int(value)
+    if tokens <= 0:
+        return None
+
+    percent = context_window_data.get('used_percentage')
+    if not isinstance(percent, (int, float)) or isinstance(percent, bool):
+        percent = tokens / context_window * 100
+
+    return {
+        'percent': max(0, min(100, percent)),
+        'tokens': tokens,
+        'context_window': context_window,
+        'method': 'stdin',
+    }
+
 def parse_context_from_transcript(transcript_path, context_window=200000):
-    """Parse context usage from transcript file."""
+    """Parse context usage from transcript file.
+
+    Fallback only: used when the stdin carries no current_usage (older Claude
+    Code, the first render of a session, right after /compact).
+    """
     if not transcript_path or not os.path.exists(transcript_path):
         return None
 
@@ -640,20 +708,26 @@ def refresh_daily_cache(lock_path=None):
     tokens each provider contributed, so the buckets always add up to exactly
     what `ccusage daily` reports.
     """
+    written = False
     try:
         today = time.strftime('%Y%m%d')
-        try:
-            proc = subprocess.run(
-                ['ccusage', 'daily', '--json', '--no-offline', '--breakdown',
-                 '--since', today, '--until', today],
-                capture_output=True, text=True, timeout=120,
-            )
-        except FileNotFoundError:
-            return  # ccusage not installed — the daily figure just stays hidden
-        except subprocess.TimeoutExpired:
-            return
-
-        if proc.returncode != 0:
+        args = ['daily', '--json', '--no-offline', '--breakdown',
+                '--since', today, '--until', today]
+        # ccusage >= 20 folds every detected agent (Codex too) into plain `daily`;
+        # `claude daily` keeps the figure Claude-only. Older ccusage has no
+        # `claude` subcommand and is Claude-only anyway, so fall back to it.
+        for cmd in (['ccusage', 'claude'] + args, ['ccusage'] + args):
+            try:
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=300,
+                )
+            except FileNotFoundError:
+                return  # ccusage not installed: the daily figure just stays hidden
+            except subprocess.TimeoutExpired:
+                return
+            if proc.returncode == 0:
+                break
+        else:
             return
 
         rows = (json.loads(proc.stdout) or {}).get('daily') or []
@@ -703,6 +777,7 @@ def refresh_daily_cache(lock_path=None):
             with os.fdopen(fd, 'w') as f:
                 json.dump(payload, f)
             os.replace(tmp, DAILY_CACHE_PATH)
+            written = True
         except Exception:
             try:
                 os.unlink(tmp)
@@ -713,7 +788,12 @@ def refresh_daily_cache(lock_path=None):
     finally:
         if lock_path:
             try:
-                os.unlink(lock_path)
+                if written:
+                    os.unlink(lock_path)
+                else:
+                    # Stale cache + no lock would respawn ccusage on the very next
+                    # render; a fresh lock holds the retry off for the lock TTL.
+                    os.utime(lock_path)
             except OSError:
                 pass
 
@@ -865,9 +945,15 @@ def main():
         workspace = data.get('workspace', {})
         transcript_path = data.get('transcript_path', '')
         cost_data = data.get('cost', {})
+        # Claude Code's own view of the context window (size + last usage).
+        # Absent on old Claude Code versions; every reader below tolerates that.
+        context_window_data = data.get('context_window')
+        if not isinstance(context_window_data, dict):
+            context_window_data = {}
 
         # Shorten model name for compact display
-        model_name_short = shorten_model_name(model_name, model_id)
+        model_name_short = shorten_model_name(
+            model_name, model_id, context_window_data.get('context_window_size'))
 
         # Which account this session bills to, and note it for the aggregator.
         # Recorded here (not in a hook) because the statusline already receives
@@ -875,11 +961,13 @@ def main():
         provider = detect_provider()
         record_session_provider(transcript_path, provider)
 
-        # Detect context window size from model ID
-        context_window = get_context_window_size(model_id)
+        # Window size: Claude Code's context_window_size, else the model-id suffix
+        context_window = get_context_window_size(model_id, context_window_data)
 
-        # Parse context usage with dynamic context window
-        context_info = parse_context_from_transcript(transcript_path, context_window)
+        # Usage: Claude Code's current_usage / used_percentage; the transcript
+        # tail is read only when those are null (first render, after /compact)
+        context_info = context_from_stdin(context_window_data, context_window) \
+            or parse_context_from_transcript(transcript_path, context_window)
 
         # Build status components
         context_display = get_context_display(context_info, model_id)

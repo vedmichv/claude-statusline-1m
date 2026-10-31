@@ -15,7 +15,10 @@ This is a Claude Code statusline extension that provides real-time context usage
 - Lines changed tracking
 - Premium pricing alerts (💸2x indicator when >200K tokens on legacy pre-4.6 Sonnet models only; Fable 5, Opus 5, Sonnet 5, Opus 4.x, and Sonnet 4.6 have flat Bedrock pricing)
 
-The tool automatically detects the model's context window size from suffixes like `[1m]` or `[200k]` in the model ID.
+Context size and usage come from the `context_window` object Claude Code sends on stdin
+(`context_window_size`, `current_usage`, `used_percentage`), so the bar matches `/context`.
+The `[1m]` / `[200k]` model-ID suffix and the transcript tail are fallbacks for old Claude Code
+versions and for the moments when `current_usage` is null (first render, right after `/compact`).
 
 ## Architecture
 
@@ -45,18 +48,29 @@ The tool automatically detects the model's context window size from suffixes lik
 
 4. **context-monitor.py** (Python Statusline Script)
    - Reads JSON input from stdin
-   - Parses transcript file to extract context usage
-   - Extracts context window size from model ID regex (e.g., `[1m]` → 1,000,000)
+   - Takes context window size and usage from stdin `context_window`; falls back to the
+     model ID regex (e.g., `[1m]` → 1,000,000) and to the transcript file
    - Generates colored, formatted statusline output to stdout
 
 ### Key Technical Details
 
 **Context Window Detection** (`get_context_window_size()` in scripts/context-monitor.py)
-- Uses regex pattern `\[(\d+)(m|k)\]` to extract context size from model ID
-- Supports both megabyte (`m`) and kilobyte (`k`) suffixes
-- Defaults to 200K tokens if no suffix found
+- First choice: `context_window.context_window_size` from stdin, Claude Code's own figure
+- ⚠️ **Do not trust the model ID for the window.** Claude Code 2.1.316 sends
+  `model.id = "anthropic.claude-opus-5-5"` for a 1M session (no `[1m]`), while
+  `context_window_size` is `1000000`. Reading the ID alone put every 1M session on a 200K
+  window: 39K tokens showed as 19% instead of 4%, and anything past 200K as `100% CRIT`.
+- Fallback for old versions: regex `\[(\d+)(m|k)\]` on the model ID, then 200K
+- The `[1M]` / `[200K]` label next to the model name follows the same sources
 
-**Context Usage Parsing** (`parse_context_from_transcript()` in scripts/context-monitor.py)
+**Context Usage** (`context_from_stdin()`, then `parse_context_from_transcript()`)
+- First choice: `context_window.current_usage` from stdin. Tokens =
+  `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (output excluded,
+  Claude Code's documented formula); percent = `used_percentage`. No file I/O.
+- `current_usage` is `null` before the first API response and right after `/compact`; only then
+  is the transcript read.
+
+**Transcript fallback** (`parse_context_from_transcript()`)
 - Two methods: parses `usage` tokens from assistant messages, or a `compact_boundary`
   system record (type `system`, subtype `compact_boundary`) — the latter renders
   `✨compacted (was NNNk)` until the next assistant response arrives
@@ -66,14 +80,17 @@ The tool automatically detects the model's context window size from suffixes lik
 **Daily Cost Cache** (`read_daily_cost()` / `spawn_daily_refresh()` / `refresh_daily_cache()`)
 - The statusline only ever *reads* `~/.claude/statusline-daily-cost.json` (~1ms). It must never
   call `ccusage` inline — a cold run is 10–18s and the statusline re-renders constantly.
-- When the cache is missing or older than `DAILY_CACHE_TTL` (60s), the statusline spawns
+- When the cache is missing or older than `DAILY_CACHE_TTL` (1800s), the statusline spawns
   `context-monitor.py --refresh-daily <lockfile>` **detached** (`start_new_session=True`) and
   renders immediately with whatever value it already had.
 - The child re-invokes this same file rather than embedding a shell one-liner — an earlier
   version interpolated `repr()` of a path into a single-quoted `sh -c` string and the nested
   quotes broke the command silently.
 - `O_CREAT|O_EXCL` on the lock file is the mutex: whoever creates it owns the refresh. A lock
-  older than `DAILY_REFRESH_LOCK_TTL` (300s) means the owner died and is reclaimed. The lock
+  older than `DAILY_REFRESH_LOCK_TTL` (1800s) means the owner died and is reclaimed. A failed
+  refresh keeps (touches) the lock, so the retry also waits the lock TTL. Each ccusage run re-reads
+  every transcript; at a 60s TTL it saturated the machine (2026-10-25). It runs
+  `ccusage claude daily` (Claude-only on ccusage >= 20) and falls back to plain `ccusage daily`. The lock
   lives in `tempfile.gettempdir()`, which on macOS is the per-user `$TMPDIR`, **not** `/tmp` —
   tests that hardcode `/tmp` will look at the wrong file and appear to fail.
 - Cache writes are atomic (`mkstemp` + `os.replace`) so a concurrent reader never sees a partial file.
@@ -199,11 +216,13 @@ rm -f ~/.claude/statusline-daily-cost.json "$(python3 -c 'import tempfile,os;pri
 - Transcript parsing must handle malformed JSON lines gracefully
 
 ### Statusline JSON Input Schema
+Fields this script reads, as captured from Claude Code 2.1.316 on Bedrock/Mantle (full list:
+https://code.claude.com/docs/en/statusline#available-data):
 ```json
 {
   "model": {
-    "id": "claude-sonnet-4-5-20250929[1m]",
-    "display_name": "Claude Sonnet 4.5"
+    "id": "anthropic.claude-opus-5-5",
+    "display_name": "Opus 5.5"
   },
   "workspace": {
     "current_dir": "/path/to/project",
@@ -215,9 +234,24 @@ rm -f ~/.claude/statusline-daily-cost.json "$(python3 -c 'import tempfile,os;pri
     "total_duration_ms": 120000,
     "total_lines_added": 50,
     "total_lines_removed": 10
+  },
+  "context_window": {
+    "total_input_tokens": 38583,
+    "total_output_tokens": 57,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 2,
+      "output_tokens": 57,
+      "cache_creation_input_tokens": 26554,
+      "cache_read_input_tokens": 12027
+    },
+    "used_percentage": 4,
+    "remaining_percentage": 96
   }
 }
 ```
+`current_usage` and `used_percentage` are `null` before the first API response and right after
+`/compact`. Note the model ID carries no `[1m]` even on a 1M session.
 
 ## Pricing Context — Bedrock (Critical for Development)
 
